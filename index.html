@@ -391,37 +391,44 @@
                             )}
 
                             {/* 리스트 출력 영역 */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
                                 {checklists.map((c, idx) => (
-                                    <div key={c.id} className={`bg-white rounded-xl border p-4 shadow-sm flex gap-4 transition-all ${c.isCompleted ? 'opacity-60 grayscale bg-slate-50' : 'border-slate-200 hover:border-blue-200'}`}>
+                                    <div key={c.id} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all ${c.isCompleted ? 'opacity-60 grayscale bg-slate-50' : 'border-slate-200 hover:border-blue-200'}`}>
                                         {c.image ? 
-                                            <img src={c.image} onClick={() => setExpandedImage(c.image)} className="w-24 h-24 object-cover rounded-lg border cursor-pointer hover:opacity-80 transition shrink-0" alt="checklist"/> 
+                                            <img src={c.image} onClick={() => setExpandedImage(c.image)} className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border cursor-pointer hover:opacity-80 transition shrink-0" alt="checklist"/> 
                                             : 
-                                            <div className="w-24 h-24 bg-slate-100 rounded-lg flex items-center justify-center text-slate-300 shrink-0"><i className="fa-solid fa-image text-2xl"></i></div>
+                                            <div className="w-20 h-20 sm:w-24 sm:h-24 bg-slate-100 rounded-lg flex items-center justify-center text-slate-300 shrink-0"><i className="fa-solid fa-image text-xl sm:text-2xl"></i></div>
                                         }
-                                        <div className="flex-1 relative flex flex-col">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <div className="flex items-center gap-2">
+                                        {/* min-w-0 추가: flex 컨테이너 내부 요소가 화면을 넘어가지 않도록 방지 */}
+                                        <div className="flex-1 flex flex-col min-w-0">
+                                            {/* flex-wrap 추가: 공간이 부족하면 자연스럽게 줄바꿈 */}
+                                            <div className="flex flex-wrap justify-between items-start mb-1.5 gap-y-2 gap-x-1">
+                                                <div className="flex items-center gap-1.5 shrink-0">
                                                     <span className="text-xs font-black text-slate-400">#{checklists.length - idx}</span>
-                                                    <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{c.trade}</span>
+                                                    {/* whitespace-nowrap 추가: 공종 이름 줄바꿈 방지 */}
+                                                    <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 whitespace-nowrap">{c.trade}</span>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    <button onClick={()=>handleToggleChecklist(c.id, !c.isCompleted)} className={`px-3 py-1 rounded text-[10px] font-bold transition border ${c.isCompleted ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-500 hover:text-emerald-600 shadow-sm'}`}>
+                                                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                                                    {/* whitespace-nowrap 추가: 완료 처리 텍스트 줄바꿈 방지 */}
+                                                    <button onClick={()=>handleToggleChecklist(c.id, !c.isCompleted)} className={`whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition border ${c.isCompleted ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-500 hover:text-emerald-600 shadow-sm'}`}>
                                                         {c.isCompleted ? <><i className="fa-solid fa-check-double mr-1"></i> 완료됨</> : <><i className="fa-solid fa-check mr-1"></i> 완료 처리</>}
                                                     </button>
-                                                    <button onClick={()=>{setEditingChecklist(c); setEditImg(c.image || null);}} className="text-slate-300 hover:text-blue-500 transition ml-1" title="수정"><i className="fa-solid fa-pen"></i></button>
-                                                    <button onClick={()=>handleDeleteChecklist(c.id)} className="text-slate-300 hover:text-rose-500 transition" title="삭제"><i className="fa-solid fa-trash-can"></i></button>
+                                                    <button onClick={()=>{setEditingChecklist(c); setEditImg(c.image || null);}} className="text-slate-300 hover:text-blue-500 transition p-1 shrink-0" title="수정"><i className="fa-solid fa-pen"></i></button>
+                                                    <button onClick={()=>handleDeleteChecklist(c.id)} className="text-slate-300 hover:text-rose-500 transition p-1 shrink-0" title="삭제"><i className="fa-solid fa-trash-can"></i></button>
                                                 </div>
                                             </div>
                                             <div className="text-xs font-bold text-slate-500 mb-1 flex items-center gap-1">
-                                                <i className="fa-solid fa-location-dot text-rose-400"></i> {c.location}
+                                                <i className="fa-solid fa-location-dot text-rose-400 shrink-0"></i> 
+                                                <span className="truncate">{c.location}</span>
                                             </div>
-                                            <p className="text-sm font-bold text-slate-800 leading-snug flex-1 mb-6">{c.content}</p>
+                                            {/* mb-6을 mb-2로 줄이고 텍스트가 길 경우 3줄로 제한(line-clamp-3) */}
+                                            <p className="text-sm font-bold text-slate-800 leading-snug flex-1 mb-2 line-clamp-3">{c.content}</p>
                                             
-                                            <div className="absolute bottom-0 left-0 flex gap-2 text-[10px] font-medium bg-slate-100 px-2 py-1 rounded w-full">
-                                                <span className="text-slate-500">등록: {c.date}</span>
-                                                <span className="text-slate-300">|</span>
-                                                <span className={c.isCompleted ? 'text-slate-500' : 'text-rose-500 font-bold'}>예정: {c.dueDate}</span>
+                                            {/* 하단 영역 절대위치(absolute) 제거 후 mt-auto와 flex-wrap으로 자연스러운 배치 적용 */}
+                                            <div className="mt-auto flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium bg-slate-100 px-2 py-1.5 rounded w-full">
+                                                <span className="text-slate-500 whitespace-nowrap">등록: {c.date}</span>
+                                                <span className="text-slate-300 hidden sm:inline">|</span>
+                                                <span className={`${c.isCompleted ? 'text-slate-500' : 'text-rose-500 font-bold'} whitespace-nowrap`}>예정: {c.dueDate}</span>
                                             </div>
                                         </div>
                                     </div>
