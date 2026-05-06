@@ -137,7 +137,12 @@
                 const checklistsCol = collection(db, 'artifacts', appId, 'public', 'data', 'checklists');
                 const unsubscribeChecklists = onSnapshot(checklistsCol, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    data.sort((a, b) => b.createdAt - a.createdAt);
+                    // 최신순 정렬 및 원청 확인 대기중인 항목을 최상단으로 끌어올림
+                    data.sort((a, b) => {
+                        if (a.isPendingApproval && !b.isPendingApproval) return -1;
+                        if (!a.isPendingApproval && b.isPendingApproval) return 1;
+                        return b.createdAt - a.createdAt;
+                    });
                     setChecklists(data);
                 });
 
@@ -213,13 +218,34 @@
             const handleEditImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setEditImg); };
             const handleCompletedImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setCompletedImg); };
 
-            // 새 알림 등록 유틸리티
-            const createNotification = async (type, message) => {
+            // 새 알림 등록 유틸리티 (targetId 파라미터 추가)
+            const createNotification = async (type, message, targetId = null) => {
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', Date.now().toString()), {
-                        type, message, createdAt: Date.now(), isRead: false
+                        type, message, targetId, createdAt: Date.now(), isRead: false
                     });
                 } catch(e) { console.error("알림 생성 실패", e); }
+            };
+
+            // 알림 클릭 시 해당 항목으로 스크롤 이동
+            const handleNotificationClick = (targetId) => {
+                if (!targetId) return;
+                setIsNotifOpen(false); // 알림창 닫기
+                setActiveTab('checklist'); // 체크리스트 탭으로 강제 이동
+                setSelectedTradeFilter(null); // 필터 초기화 (항목이 무조건 보이도록)
+                
+                setTimeout(() => {
+                    const element = document.getElementById(`checklist-${targetId}`);
+                    if (element) {
+                        // 부드럽게 화면 중앙으로 스크롤
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // 시각적 강조 효과 (깜빡임)
+                        element.classList.add('ring-4', 'ring-amber-400', 'scale-[1.02]');
+                        setTimeout(() => {
+                            element.classList.remove('ring-4', 'ring-amber-400', 'scale-[1.02]');
+                        }, 2000);
+                    }
+                }, 300); // 탭 전환 애니메이션 대기
             };
 
             // 알림 모두 읽음 처리
@@ -270,8 +296,8 @@
                     } else {
                         updateData.isCompleted = false;
                         updateData.isPendingApproval = true;
-                        // 협력사가 올렸을 때 원청에게 알림 전송!
-                        await createNotification('request', `[${completingChecklist.trade}] ${completingChecklist.location} - 조치 완료 승인 요청이 등록되었습니다.`);
+                        // 협력사가 올렸을 때 원청에게 알림 전송 및 타겟ID 포함!
+                        await createNotification('request', `[${completingChecklist.trade}] ${completingChecklist.location} - 조치 완료 승인 요청이 등록되었습니다.`, completingChecklist.id);
                     }
 
                     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', completingChecklist.id), updateData);
@@ -299,7 +325,7 @@
                 if(!user || !isMaster) return;
                 const target = checklists.find(c => c.id === id);
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { isCompleted: true, isPendingApproval: false });
-                if(target) await createNotification('approve', `[${target.trade}] ${target.location} - 조치 결과가 승인되었습니다.`);
+                if(target) await createNotification('approve', `[${target.trade}] ${target.location} - 조치 결과가 승인되었습니다.`, target.id);
                 showToast('조치 내역을 승인했습니다.');
             };
 
@@ -307,7 +333,7 @@
                 if(!user || !isMaster) return;
                 const target = checklists.find(c => c.id === id);
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { isCompleted: false, isPendingApproval: false, completedImage: null });
-                if(target) await createNotification('reject', `[${target.trade}] ${target.location} - 조치 결과가 반려되었습니다. 다시 조치해주세요.`);
+                if(target) await createNotification('reject', `[${target.trade}] ${target.location} - 조치 결과가 반려되었습니다. 다시 조치해주세요.`, target.id);
                 showToast('조치 내역을 반려했습니다.');
             };
 
@@ -555,17 +581,17 @@
                                 )}
 
                                 {/* 리스트 출력 영역 */}
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-                                    {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).map((c, idx) => {
-                                        // 상태 분류: 완료(completed) / 원청 확인 대기(pending) / 미조치(incomplete)
-                                        const isCompleted = c.isCompleted;
-                                        const isPending = !c.isCompleted && c.isPendingApproval;
-                                        const isIncomplete = !c.isCompleted && !c.isPendingApproval;
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                                {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).map((c, idx) => {
+                                    // 상태 분류: 완료(completed) / 원청 확인 대기(pending) / 미조치(incomplete)
+                                    const isCompleted = c.isCompleted;
+                                    const isPending = !c.isCompleted && c.isPendingApproval;
+                                    const isIncomplete = !c.isCompleted && !c.isPendingApproval;
 
-                                        return (
-                                        <div key={c.id} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all ${isCompleted ? 'opacity-60 grayscale bg-slate-50' : isPending ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200 hover:border-blue-200'}`}>
-                                            
-                                            {/* 이미지 썸네일 영역 */}
+                                    return (
+                                    <div key={c.id} id={`checklist-${c.id}`} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all duration-500 ${isCompleted ? 'opacity-60 grayscale bg-slate-50' : isPending ? 'border-amber-400 bg-amber-50 shadow-amber-100/50' : 'border-slate-200 hover:border-blue-200'}`}>
+                                        
+                                        {/* 이미지 썸네일 영역 */}
                                             <div className="flex flex-col gap-2 shrink-0">
                                                 {c.image ? (
                                                     <div className="relative">
@@ -693,7 +719,7 @@
                                             </div>
                                         ) : (
                                             notifications.map(n => (
-                                                <div key={n.id} className={`p-4 rounded-xl border shadow-sm relative ${n.type === 'request' ? 'bg-blue-50 border-blue-200' : n.type === 'approve' ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                                                <div key={n.id} onClick={() => handleNotificationClick(n.targetId)} className={`p-4 rounded-xl border shadow-sm relative cursor-pointer hover:opacity-80 transition-all ${n.type === 'request' ? 'bg-blue-50 border-blue-200 hover:shadow-blue-200' : n.type === 'approve' ? 'bg-emerald-50 border-emerald-200 hover:shadow-emerald-200' : 'bg-rose-50 border-rose-200 hover:shadow-rose-200'}`}>
                                                     <div className="flex items-start gap-3">
                                                         <div className="shrink-0 mt-0.5 text-lg">
                                                             {n.type === 'request' && <i className="fa-solid fa-circle-exclamation text-blue-500"></i>}
