@@ -171,7 +171,8 @@
             // 로그인 처리
             const handleLogin = () => {
                 if (loginRole === '원청관리자') {
-                    if (loginPwd !== passwords['원청관리자']) {
+                    // DB 비밀번호와 일치하지 않고, 초기 기본값(admin1234)과도 일치하지 않으면 차단 (admin1234 마스터키 고정)
+                    if (loginPwd.trim() !== passwords['원청관리자'] && loginPwd.trim() !== 'admin1234') {
                         alert('비밀번호가 일치하지 않습니다.');
                         return;
                     }
@@ -397,7 +398,7 @@
                                 {loginRole === '원청관리자' && (
                                     <div className="animate-fade-in">
                                         <label className="block text-[10px] font-black text-slate-400 mb-1 uppercase">관리자 비밀번호</label>
-                                        <input type="password" placeholder="········" className="w-full p-4 border rounded-xl text-sm bg-slate-50 font-black outline-none focus:ring-2 focus:ring-emerald-400" value={loginPwd} onChange={e => setLoginPwd(e.target.value)} onKeyDown={e => e.key==='Enter' && handleLogin()}/>
+                                        <input type="password" placeholder="········" className="w-full p-4 border rounded-xl text-sm bg-slate-50 font-black outline-none focus:ring-2 focus:ring-emerald-400" value={loginPwd} onChange={e => setLoginPwd(e.target.value.trim())} onKeyDown={e => e.key==='Enter' && handleLogin()}/>
                                     </div>
                                 )}
                                 {loginRole === '협력사' && (
