@@ -27,6 +27,8 @@
         .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
         @keyframes fadeInDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in-down { animation: fadeInDown 0.3s ease-out forwards; }
+        @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        .animate-slide-in-right { animation: slideInRight 0.3s ease-out forwards; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -64,11 +66,26 @@
             '가설공사': '추락(안전대 미체결), 자재 낙하', '토공사': '중장비 충돌/협착, 토사 붕괴', '철근콘크리트': '개구부 추락, 펌프카 타격', '철골공사': '고소작업 추락, 화재', '조적/미장/방수': '밀폐공간 질식', '전기/설비': '활선작업 감전', '기타': '자재 찔림/베임'
         };
 
+        const INITIAL_PASSWORDS = {
+            '원청관리자': 'admin1234'
+        };
+
         function App() {
+            // 로그인 상태
             const [user, setUser] = useState(null);
+            const [isEntered, setIsEntered] = useState(false);
+            const [loginRole, setLoginRole] = useState('원청관리자');
+            const [loginPwd, setLoginPwd] = useState('');
+            const [passwords, setPasswords] = useState(INITIAL_PASSWORDS);
+
+            const isMaster = loginRole === '원청관리자';
+
+            // 데이터 상태
             const [checklists, setChecklists] = useState([]);
+            const [notifications, setNotifications] = useState([]);
             const [riskMapping, setRiskMapping] = useState(INITIAL_RISK_MAPPING);
             const [toasts, setToasts] = useState([]);
+            const [activeTab, setActiveTab] = useState('checklist');
 
             const defaultTrade = Object.keys(INITIAL_RISK_MAPPING)[0];
             const [newCheck, setNewCheck] = useState({ date: getLocalYMD(), trade: defaultTrade, location: '', content: '', dueDate: getLocalYMD() });
@@ -76,15 +93,18 @@
             const fileRef = useRef(null);
             const [expandedImage, setExpandedImage] = useState(null);
 
+            // 알림창 토글 상태
+            const [isNotifOpen, setIsNotifOpen] = useState(false);
+
             // 필터링 상태 추가
             const [selectedTradeFilter, setSelectedTradeFilter] = useState(null);
 
-            // 수정 모드 상태
+            // 수정 모드 상태 (원청 전용)
             const [editingChecklist, setEditingChecklist] = useState(null);
             const [editImg, setEditImg] = useState(null);
             const editFileRef = useRef(null);
 
-            // 조치 완료 모드 상태 추가
+            // 조치 완료 모드 상태
             const [completingChecklist, setCompletingChecklist] = useState(null);
             const [completedImg, setCompletedImg] = useState(null);
             const completedFileRef = useRef(null);
@@ -95,7 +115,7 @@
                 setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
             };
 
-            // Firebase 익명 로그인 (권한 구분 없이 누구나 접속)
+            // Firebase 익명 로그인
             useEffect(() => {
                 const initAuth = async () => {
                     if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -109,36 +129,64 @@
                 return () => unsubscribe();
             }, []);
 
-            // 실시간 데이터 가져오기
+            // 실시간 데이터 가져오기 (체크리스트, 알림, 설정)
             useEffect(() => {
                 if (!user) return;
-                const checklistsCol = collection(db, 'artifacts', appId, 'public', 'data', 'checklists');
                 
+                // 1. 체크리스트 데이터
+                const checklistsCol = collection(db, 'artifacts', appId, 'public', 'data', 'checklists');
                 const unsubscribeChecklists = onSnapshot(checklistsCol, (snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // 메모리 상에서 최신순 정렬
                     data.sort((a, b) => b.createdAt - a.createdAt);
                     setChecklists(data);
-                }, (error) => {
-                    console.error("데이터 동기화 오류:", error);
                 });
 
+                // 2. 알림 내역 데이터
+                const notifsCol = collection(db, 'artifacts', appId, 'public', 'data', 'notifications');
+                const unsubscribeNotifs = onSnapshot(notifsCol, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    data.sort((a, b) => b.createdAt - a.createdAt); // 최신순 정렬
+                    setNotifications(data);
+                });
+
+                // 3. 글로벌 설정(공종, 비밀번호)
                 const settingsDoc = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
                 const unsubscribeSettings = onSnapshot(settingsDoc, (docSnap) => {
-                    if (docSnap.exists() && docSnap.data().riskMapping) {
-                        setRiskMapping(docSnap.data().riskMapping);
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if(data.riskMapping) setRiskMapping(data.riskMapping);
+                        if(data.passwords) setPasswords(data.passwords);
                     } else {
-                        setDoc(settingsDoc, { riskMapping: INITIAL_RISK_MAPPING }, { merge: true });
+                        setDoc(settingsDoc, { riskMapping: INITIAL_RISK_MAPPING, passwords: INITIAL_PASSWORDS }, { merge: true });
                     }
                 });
 
                 return () => {
                     unsubscribeChecklists();
+                    unsubscribeNotifs();
                     unsubscribeSettings();
                 };
             }, [user]);
 
-            // 이미지 첨부 및 리사이징 로직
+            // 로그인 처리
+            const handleLogin = () => {
+                if (loginRole === '원청관리자') {
+                    if (loginPwd !== passwords['원청관리자']) {
+                        alert('비밀번호가 일치하지 않습니다.');
+                        return;
+                    }
+                }
+                // 협력사는 비밀번호 없이 패스
+                setIsEntered(true);
+                setActiveTab('checklist');
+            };
+
+            const handleLogout = () => {
+                setIsEntered(false);
+                setLoginPwd('');
+            };
+
+            // 강력한 이미지 압축 및 리사이징 로직
             const processImage = (file, callback) => {
                 const r = new FileReader();
                 r.onloadend = () => {
@@ -147,34 +195,43 @@
                         const canvas = document.createElement('canvas');
                         let width = imgObj.width;
                         let height = imgObj.height;
-                        const MAX_WIDTH = 800; // 자동 압축 폭
+                        const MAX_WIDTH = 800; // 가로 최대 800px로 제한
                         if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
                         canvas.width = width; canvas.height = height;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(imgObj, 0, 0, width, height);
-                        callback(canvas.toDataURL('image/jpeg', 0.6));
+                        // 품질을 0.5(50%)로 낮춰 용량 대폭 감소
+                        callback(canvas.toDataURL('image/jpeg', 0.5));
                     };
                     imgObj.src = r.result;
                 };
                 r.readAsDataURL(file);
             };
 
-            const handleImg = (e) => {
-                const f = e.target.files[0];
-                if (f) processImage(f, setImg);
+            const handleImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setImg); };
+            const handleEditImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setEditImg); };
+            const handleCompletedImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setCompletedImg); };
+
+            // 새 알림 등록 유틸리티
+            const createNotification = async (type, message) => {
+                try {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', Date.now().toString()), {
+                        type, message, createdAt: Date.now(), isRead: false
+                    });
+                } catch(e) { console.error("알림 생성 실패", e); }
             };
 
-            const handleEditImg = (e) => {
-                const f = e.target.files[0];
-                if (f) processImage(f, setEditImg);
+            // 알림 모두 읽음 처리
+            const markAllAsRead = async () => {
+                const unreadNotifs = notifications.filter(n => !n.isRead);
+                for (const n of unreadNotifs) {
+                    try {
+                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', n.id), { isRead: true });
+                    } catch(e) {}
+                }
             };
 
-            const handleCompletedImg = (e) => {
-                const f = e.target.files[0];
-                if (f) processImage(f, setCompletedImg);
-            };
-
-            // 체크리스트 등록 핸들러
+            // 1. 체크리스트 신규 등록
             const onSubmit = async (e) => {
                 e.preventDefault();
                 if(!user) return;
@@ -185,6 +242,7 @@
                         ...newCheck, 
                         image: img,
                         isCompleted: false, 
+                        isPendingApproval: false, 
                         createdAt: Date.now() 
                     });
                     
@@ -193,118 +251,127 @@
                     setImg(null); 
                     if(fileRef.current) fileRef.current.value = '';
                 } catch(err) { 
-                    alert('사진 용량이 너무 큽니다. 다른 사진을 선택하거나 기기의 용량을 확인해주세요.'); 
+                    alert('오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); 
                 }
             };
 
-            // 완료 상태 토글 핸들러 (수정)
-            const handleToggleChecklist = async (id, isCompleted) => {
-                if(!user) return;
-                // 완료 상태를 해제할 때는 바로 처리 (사진도 삭제)
-                if (!isCompleted) {
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { isCompleted: false, completedImage: null });
-                }
-            };
-
-            // 조치 완료 사진 첨부 저장 핸들러
+            // 2. 조치 완료 사진 첨부 및 처리 요청 (협력사, 원청 공통)
             const handleCompleteSubmit = async (e) => {
                 e.preventDefault();
                 if(!user || !completingChecklist) return;
                 
                 try {
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', completingChecklist.id), { 
-                        isCompleted: true, 
-                        completedImage: completedImg,
-                        completedAt: Date.now()
-                    });
+                    const updateData = { completedImage: completedImg, completedAt: Date.now() };
+
+                    if (isMaster) {
+                        updateData.isCompleted = true;
+                        updateData.isPendingApproval = false;
+                    } else {
+                        updateData.isCompleted = false;
+                        updateData.isPendingApproval = true;
+                        // 협력사가 올렸을 때 원청에게 알림 전송!
+                        await createNotification('request', `[${completingChecklist.trade}] ${completingChecklist.location} - 조치 완료 승인 요청이 등록되었습니다.`);
+                    }
+
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', completingChecklist.id), updateData);
                     
-                    showToast('조치 완료 처리되었습니다.');
+                    showToast(isMaster ? '조치 완료 처리되었습니다.' : '원청사에 조치 완료 확인을 요청했습니다.');
                     setCompletingChecklist(null);
                     setCompletedImg(null);
                 } catch(err) {
-                    alert('사진 용량이 너무 크거나 오류가 발생했습니다.');
+                    alert('사진 첨부 중 오류가 발생했습니다.');
                 }
             };
 
-            // 삭제 핸들러
+            // 3. 완료 상태 토글 (완료 상태 해제) - 원청 전용
+            const handleToggleChecklist = async (id, isCompleted) => {
+                if(!user || !isMaster) return;
+                if (!isCompleted) {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { 
+                        isCompleted: false, isPendingApproval: false, completedImage: null 
+                    });
+                }
+            };
+
+            // 4. 조치 승인 및 반려 (원청 전용)
+            const handleApprove = async (id) => {
+                if(!user || !isMaster) return;
+                const target = checklists.find(c => c.id === id);
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { isCompleted: true, isPendingApproval: false });
+                if(target) await createNotification('approve', `[${target.trade}] ${target.location} - 조치 결과가 승인되었습니다.`);
+                showToast('조치 내역을 승인했습니다.');
+            };
+
+            const handleReject = async (id) => {
+                if(!user || !isMaster) return;
+                const target = checklists.find(c => c.id === id);
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { isCompleted: false, isPendingApproval: false, completedImage: null });
+                if(target) await createNotification('reject', `[${target.trade}] ${target.location} - 조치 결과가 반려되었습니다. 다시 조치해주세요.`);
+                showToast('조치 내역을 반려했습니다.');
+            };
+
+            // 삭제 (원청 전용)
             const handleDeleteChecklist = async (id) => {
-                if(!user || !confirm('이 점검 항목을 삭제하시겠습니까?')) return;
+                if(!user || !isMaster || !confirm('이 점검 항목을 삭제하시겠습니까?')) return;
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id));
                 showToast('항목이 삭제되었습니다.');
             };
 
-            // 수정 핸들러
+            // 수정 (원청 전용)
             const handleUpdateSubmit = async (e) => {
                 e.preventDefault();
-                if(!user || !editingChecklist) return;
+                if(!user || !isMaster || !editingChecklist) return;
                 
                 try {
-                    const updateData = {
-                        date: editingChecklist.date,
-                        trade: editingChecklist.trade,
-                        location: editingChecklist.location,
-                        dueDate: editingChecklist.dueDate,
-                        content: editingChecklist.content,
-                        image: editImg 
-                    };
-                    
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', editingChecklist.id), updateData);
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', editingChecklist.id), {
+                        date: editingChecklist.date, trade: editingChecklist.trade, location: editingChecklist.location,
+                        dueDate: editingChecklist.dueDate, content: editingChecklist.content, image: editImg 
+                    });
                     showToast('점검 항목이 수정되었습니다.');
-                    setEditingChecklist(null);
-                    setEditImg(null);
-                } catch(err) {
-                    alert('수정 중 오류가 발생했습니다.');
-                }
+                    setEditingChecklist(null); setEditImg(null);
+                } catch(err) { alert('수정 중 오류가 발생했습니다.'); }
             };
 
-            // 공종 추가
+            // 공종 관리 (원청 전용)
             const handleAddTrade = async () => {
-                if(!user) return;
+                if(!user || !isMaster) return;
                 const newTrade = prompt('추가할 새로운 공종(업체명)을 입력하세요:');
                 if (newTrade && newTrade.trim()) {
                     const trimmedTrade = newTrade.trim();
-                    if (riskMapping[trimmedTrade]) {
-                        alert('이미 존재하는 공종입니다.');
-                        return;
-                    }
+                    if (riskMapping[trimmedTrade]) return alert('이미 존재하는 공종입니다.');
+                    
                     const updatedMapping = { ...riskMapping, [trimmedTrade]: '추가 위험 요소' };
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), { riskMapping: updatedMapping }, { merge: true });
                     showToast(`'${trimmedTrade}' 항목이 추가되었습니다.`);
-                    
                     setNewCheck(prev => ({...prev, trade: trimmedTrade}));
-                    if(editingChecklist) setEditingChecklist(prev => ({...prev, trade: trimmedTrade}));
                 }
             };
 
-            // 공종 삭제
             const handleDeleteTrade = async (tradeToDelete) => {
-                if(!user) return;
-                if(Object.keys(riskMapping).length <= 1) {
-                    alert('최소 1개의 공종은 남아있어야 합니다.');
-                    return;
-                }
+                if(!user || !isMaster) return;
+                if(Object.keys(riskMapping).length <= 1) return alert('최소 1개의 공종은 남아있어야 합니다.');
+                
                 if (confirm(`'${tradeToDelete}' 공종을 정말 삭제하시겠습니까?`)) {
                     const updatedMapping = { ...riskMapping };
                     delete updatedMapping[tradeToDelete];
-                    
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), { riskMapping: updatedMapping }, { merge: true });
                     showToast(`'${tradeToDelete}' 공종이 삭제되었습니다.`);
-                    
-                    const firstAvailable = Object.keys(updatedMapping)[0];
-                    if (newCheck.trade === tradeToDelete) setNewCheck(prev => ({...prev, trade: firstAvailable}));
-                    if (editingChecklist && editingChecklist.trade === tradeToDelete) setEditingChecklist(prev => ({...prev, trade: firstAvailable}));
+                    if (newCheck.trade === tradeToDelete) setNewCheck(prev => ({...prev, trade: Object.keys(updatedMapping)[0]}));
                 }
             };
 
-            // 통계 계산
+            // 통계 및 뱃지 카운트 계산
             const totalCount = checklists.length;
             const completedCount = checklists.filter(c => c.isCompleted).length;
-            const pendingCount = totalCount - completedCount;
+            const pendingApprovalCount = checklists.filter(c => !c.isCompleted && c.isPendingApproval).length;
+            const pendingCount = totalCount - completedCount - pendingApprovalCount;
+            const unreadNotifCount = notifications.filter(n => !n.isRead).length;
 
             const tradeStats = checklists.reduce((acc, curr) => {
-                if (!acc[curr.trade]) acc[curr.trade] = { total: 0, pending: 0 };
+                if (!acc[curr.trade]) acc[curr.trade] = { total: 0, pending: 0, waiting: 0 };
                 acc[curr.trade].total += 1;
-                if (!curr.isCompleted) acc[curr.trade].pending += 1;
+                if (!curr.isCompleted && !curr.isPendingApproval) acc[curr.trade].pending += 1;
+                if (!curr.isCompleted && curr.isPendingApproval) acc[curr.trade].waiting += 1;
                 return acc;
             }, {});
 
@@ -312,9 +379,41 @@
                 return <div className="min-h-screen bg-slate-900 flex justify-center items-center"><i className="fa-solid fa-spinner fa-spin text-white text-3xl"></i></div>;
             }
 
+            // 로그인 전 화면
+            if (!isEntered) {
+                return (
+                    <div className="min-h-screen bg-slate-900 flex justify-center items-center p-4">
+                        <div className="bg-white rounded-3xl p-10 max-w-md w-full animate-fade-in-down border border-slate-100 shadow-2xl">
+                            <div className="flex justify-center mb-6"><div className="bg-emerald-600 p-5 rounded-3xl shadow-lg"><i className="fa-solid fa-helmet-safety text-5xl text-white"></i></div></div>
+                            <h1 className="text-2xl font-bold text-center text-slate-800 mb-10 tracking-tight">동작 보라매역 프리센트</h1>
+                            <div className="space-y-4 mb-8">
+                                <div>
+                                    <label className="block text-[10px] font-black text-slate-400 mb-1 uppercase">권한 선택</label>
+                                    <select className="w-full p-4 border rounded-xl text-sm font-bold bg-slate-50 outline-none focus:ring-2 focus:ring-emerald-400" value={loginRole} onChange={e => {setLoginRole(e.target.value); setLoginPwd('');}}>
+                                        <option value="원청관리자">원청관리자 (Master)</option>
+                                        <option value="협력사">협력사</option>
+                                    </select>
+                                </div>
+                                {loginRole === '원청관리자' && (
+                                    <div className="animate-fade-in">
+                                        <label className="block text-[10px] font-black text-slate-400 mb-1 uppercase">관리자 비밀번호</label>
+                                        <input type="password" placeholder="········" className="w-full p-4 border rounded-xl text-sm bg-slate-50 font-black outline-none focus:ring-2 focus:ring-emerald-400" value={loginPwd} onChange={e => setLoginPwd(e.target.value)} onKeyDown={e => e.key==='Enter' && handleLogin()}/>
+                                    </div>
+                                )}
+                                {loginRole === '협력사' && (
+                                    <div className="bg-blue-50 text-blue-700 p-4 rounded-xl text-xs font-bold animate-fade-in">
+                                        <i className="fa-solid fa-circle-info mr-1"></i> 협력사는 비밀번호 없이 바로 접속하여 체크리스트를 등록 및 완료 요청할 수 있습니다.
+                                    </div>
+                                )}
+                            </div>
+                            <button onClick={handleLogin} className="w-full bg-slate-800 text-white font-bold py-4 rounded-xl hover:bg-black transition shadow-lg">시스템 접속 <i className="fa-solid fa-arrow-right ml-2"></i></button>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
                 <div className="min-h-screen pb-20 relative bg-slate-50">
-                    {/* 토스트 알림 영역 */}
                     <div className="fixed top-20 right-4 z-50 space-y-2">
                         {toasts.map(t => (
                             <div key={t.id} className="bg-slate-800 text-white px-5 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-fade-in-down border border-slate-700">
@@ -329,189 +428,296 @@
                         <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
                             <div className="flex items-center gap-3">
                                 <div className="bg-emerald-600 p-2 rounded-lg"><i className="fa-solid fa-clipboard-check"></i></div>
-                                <h1 className="font-bold tracking-tight text-lg">동작 보라매역 프리센트</h1>
+                                <h1 className="font-bold tracking-tight text-lg hidden sm:block">동작 보라매역 프리센트</h1>
+                            </div>
+                            <div className="flex gap-4">
+                                <button onClick={()=>setActiveTab('checklist')} className={`text-sm font-bold transition ${activeTab==='checklist'?'text-emerald-400':'text-slate-400 hover:text-white'}`}>체크리스트</button>
+                                {isMaster && <button onClick={()=>setActiveTab('settings')} className={`text-sm font-bold transition ${activeTab==='settings'?'text-emerald-400':'text-slate-400 hover:text-white'}`}>설정 (Master)</button>}
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <span className={`px-2 py-1 rounded-lg text-xs font-bold ${isMaster ? 'bg-blue-600/30 text-blue-300' : 'bg-slate-700 text-slate-300'}`}>{loginRole}</span>
+                                
+                                {/* 알림(종 모양) 버튼 - 원청 전용 */}
+                                {isMaster && (
+                                    <button onClick={() => { setIsNotifOpen(true); markAllAsRead(); }} className="relative text-slate-400 hover:text-white transition" title="알림 내역">
+                                        <i className="fa-solid fa-bell text-xl"></i>
+                                        {unreadNotifCount > 0 && (
+                                            <span className="absolute -top-1 -right-2 bg-rose-500 text-white text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full shadow-md animate-pulse">
+                                                {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+                                            </span>
+                                        )}
+                                    </button>
+                                )}
+
+                                <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 transition" title="로그아웃"><i className="fa-solid fa-power-off text-lg"></i></button>
                             </div>
                         </div>
                     </nav>
 
                     {/* 메인 콘텐츠 */}
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-                        <div className="space-y-6 animate-fade-in">
-                            
-                            {/* 등록 폼 */}
-                            <div className="bg-white rounded-2xl shadow border border-slate-100 p-6">
-                                <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-800">
-                                    <i className="fa-solid fa-pen-to-square text-blue-600"></i> 체크리스트
-                                </h2>
-                                <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-500">등록일자</label>
-                                        <input type="date" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={newCheck.date} onChange={e=>setNewCheck({...newCheck, date:e.target.value})} required/>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-500">공종</label>
-                                        <div className="flex gap-1">
-                                            <select className="flex-1 p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={newCheck.trade} onChange={e=>setNewCheck({...newCheck, trade:e.target.value})}>
-                                                {Object.keys(riskMapping).map(t=><option key={t}>{t}</option>)}
-                                            </select>
-                                            <button type="button" onClick={handleAddTrade} className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 rounded-lg border border-slate-200 transition" title="새 공종 추가">
-                                                <i className="fa-solid fa-plus"></i>
-                                            </button>
-                                            <button type="button" onClick={() => handleDeleteTrade(newCheck.trade)} className="bg-rose-50 hover:bg-rose-100 text-rose-500 px-3 rounded-lg border border-rose-200 transition" title="현재 선택된 공종 삭제">
-                                                <i className="fa-solid fa-minus"></i>
-                                            </button>
+                        {activeTab === 'checklist' && (
+                            <div className="space-y-6 animate-fade-in">
+                                {/* 등록 폼 */}
+                                <div className="bg-white rounded-2xl shadow border border-slate-100 p-6">
+                                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-800">
+                                        <i className="fa-solid fa-pen-to-square text-blue-600"></i> 점검 및 지시사항 등록
+                                    </h2>
+                                    <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-slate-500">등록일자</label>
+                                            <input type="date" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={newCheck.date} onChange={e=>setNewCheck({...newCheck, date:e.target.value})} required/>
                                         </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-500">현장위치</label>
-                                        <input type="text" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" placeholder="예: 101동 5층" value={newCheck.location} onChange={e=>setNewCheck({...newCheck, location:e.target.value})} required/>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-slate-500">완료 예정일</label>
-                                        <input type="date" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={newCheck.dueDate} onChange={e=>setNewCheck({...newCheck, dueDate:e.target.value})} required/>
-                                    </div>
-                                    <div className="space-y-1 md:col-span-2 lg:col-span-3">
-                                        <label className="text-[10px] font-bold text-slate-500">점검 및 지시 내용</label>
-                                        <input type="text" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" placeholder="작업자 지시사항이나 점검 내용을 입력하세요." value={newCheck.content} onChange={e=>setNewCheck({...newCheck, content:e.target.value})} required/>
-                                    </div>
-                                    <div className="flex gap-2 items-end">
-                                        <label className="flex-1 bg-white border border-slate-300 text-slate-600 text-sm font-bold p-2.5 rounded-lg flex justify-center items-center cursor-pointer hover:bg-slate-50 transition">
-                                            <i className="fa-solid fa-camera mr-2"></i> {img ? '사진 재선택' : '사진 첨부'}
-                                            <input type="file" className="hidden" accept="image/*" onChange={handleImg} ref={fileRef}/>
-                                        </label>
-                                        <button type="submit" className="flex-1 bg-blue-600 text-white font-bold p-2.5 rounded-lg shadow hover:bg-blue-700 transition">등록하기</button>
-                                    </div>
-                                </form>
-                                {img && <div className="mt-3 relative inline-block">
-                                    <img src={img} className="h-24 object-cover rounded-lg border shadow-sm" alt="preview"/>
-                                    <button type="button" onClick={()=>{setImg(null); if(fileRef.current) fileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
-                                </div>}
-                            </div>
-
-                            {/* 현황 요약 보드 */}
-                            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex justify-around divide-x divide-slate-100">
-                                <div className="text-center w-full">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">총 점검 건수</p>
-                                    <p className="text-2xl font-black text-slate-800">{totalCount}</p>
-                                </div>
-                                <div className="text-center w-full">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">조치 완료</p>
-                                    <p className="text-2xl font-black text-emerald-500">{completedCount}</p>
-                                </div>
-                                <div className="text-center w-full">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">미조치 (진행중)</p>
-                                    <p className="text-2xl font-black text-rose-500">{pendingCount}</p>
-                                </div>
-                            </div>
-
-                            {/* 공종별 점검 현황 통계 (필터 기능 추가) */}
-                            {Object.keys(tradeStats).length > 0 && (
-                                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-                                    <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                                        <i className="fa-solid fa-chart-pie text-blue-500"></i> 공종별 점검 현황
-                                    </h3>
-                                    <p className="text-[10px] text-slate-400 mb-3 mt-1">항목을 클릭하여 해당 공종만 필터링해 보세요.</p>
-                                    <div className="flex flex-wrap gap-2">
-                                        <button 
-                                            onClick={() => setSelectedTradeFilter(null)}
-                                            className={`px-3 py-2 rounded-lg text-xs font-bold transition border shadow-sm ${selectedTradeFilter === null ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
-                                        >전체보기</button>
-                                        {Object.entries(tradeStats).sort((a,b) => b[1].total - a[1].total).map(([trade, stat]) => (
-                                            <button 
-                                                key={trade} 
-                                                onClick={() => setSelectedTradeFilter(selectedTradeFilter === trade ? null : trade)}
-                                                className={`px-3 py-2 rounded-lg border shadow-sm flex items-center gap-2 transition ${selectedTradeFilter === trade ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'}`}
-                                            >
-                                                <span className="text-xs font-bold">{trade}</span>
-                                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${selectedTradeFilter === trade ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-600'}`}>{stat.total}건</span>
-                                                {stat.pending > 0 && (
-                                                    <span className={`text-[10px] font-bold ml-1 pl-2 border-l ${selectedTradeFilter === trade ? 'text-blue-100 border-blue-400/50' : 'text-rose-500 border-slate-300'}`}>
-                                                        미조치 {stat.pending}건
-                                                    </span>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-slate-500">공종</label>
+                                            <div className="flex gap-1">
+                                                <select className="flex-1 p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={newCheck.trade} onChange={e=>setNewCheck({...newCheck, trade:e.target.value})}>
+                                                    {Object.keys(riskMapping).map(t=><option key={t}>{t}</option>)}
+                                                </select>
+                                                {isMaster && (
+                                                    <>
+                                                        <button type="button" onClick={handleAddTrade} className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 rounded-lg border border-slate-200 transition" title="새 공종 추가"><i className="fa-solid fa-plus"></i></button>
+                                                        <button type="button" onClick={() => handleDeleteTrade(newCheck.trade)} className="bg-rose-50 hover:bg-rose-100 text-rose-500 px-3 rounded-lg border border-rose-200 transition" title="현재 선택된 공종 삭제"><i className="fa-solid fa-minus"></i></button>
+                                                    </>
                                                 )}
-                                            </button>
-                                        ))}
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-slate-500">현장위치</label>
+                                            <input type="text" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" placeholder="예: 101동 5층" value={newCheck.location} onChange={e=>setNewCheck({...newCheck, location:e.target.value})} required/>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-bold text-slate-500">완료 예정일</label>
+                                            <input type="date" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={newCheck.dueDate} onChange={e=>setNewCheck({...newCheck, dueDate:e.target.value})} required/>
+                                        </div>
+                                        <div className="space-y-1 md:col-span-2 lg:col-span-3">
+                                            <label className="text-[10px] font-bold text-slate-500">점검 및 지시 내용</label>
+                                            <input type="text" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" placeholder="작업자 지시사항이나 점검 내용을 입력하세요." value={newCheck.content} onChange={e=>setNewCheck({...newCheck, content:e.target.value})} required/>
+                                        </div>
+                                        <div className="flex gap-2 items-end">
+                                            <label className="flex-1 bg-white border border-slate-300 text-slate-600 text-sm font-bold p-2.5 rounded-lg flex justify-center items-center cursor-pointer hover:bg-slate-50 transition">
+                                                <i className="fa-solid fa-camera mr-2"></i> {img ? '사진 재선택' : '사진 첨부'}
+                                                <input type="file" className="hidden" accept="image/*" onChange={handleImg} ref={fileRef}/>
+                                            </label>
+                                            <button type="submit" className="flex-1 bg-blue-600 text-white font-bold p-2.5 rounded-lg shadow hover:bg-blue-700 transition">등록하기</button>
+                                        </div>
+                                    </form>
+                                    {img && <div className="mt-3 relative inline-block">
+                                        <img src={img} className="h-24 object-cover rounded-lg border shadow-sm" alt="preview"/>
+                                        <button type="button" onClick={()=>{setImg(null); if(fileRef.current) fileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
+                                    </div>}
+                                </div>
+
+                                {/* 현황 요약 보드 */}
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex flex-wrap sm:flex-nowrap justify-around sm:divide-x divide-slate-100 gap-y-4">
+                                    <div className="text-center w-1/2 sm:w-full">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">총 점검</p>
+                                        <p className="text-2xl font-black text-slate-800">{totalCount}</p>
+                                    </div>
+                                    <div className="text-center w-1/2 sm:w-full border-l sm:border-l-0 border-slate-100">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">최종 완료</p>
+                                        <p className="text-2xl font-black text-emerald-500">{completedCount}</p>
+                                    </div>
+                                    <div className="text-center w-1/2 sm:w-full border-t sm:border-t-0 sm:border-l border-slate-100 pt-4 sm:pt-0">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">원청 확인 대기</p>
+                                        <p className="text-2xl font-black text-amber-500">{pendingApprovalCount}</p>
+                                    </div>
+                                    <div className="text-center w-1/2 sm:w-full border-t border-l sm:border-t-0 border-slate-100 pt-4 sm:pt-0">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">미조치</p>
+                                        <p className="text-2xl font-black text-rose-500">{pendingCount}</p>
                                     </div>
                                 </div>
-                            )}
 
-                            {/* 리스트 출력 영역 */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-                                {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).map((c, idx) => (
-                                    <div key={c.id} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all ${c.isCompleted ? 'opacity-60 grayscale bg-slate-50' : 'border-slate-200 hover:border-blue-200'}`}>
-                                        
-                                        {/* 이미지 썸네일 영역 (조치 전/후 모두 표시) */}
-                                        <div className="flex flex-col gap-2 shrink-0">
-                                            {c.image ? (
-                                                <div className="relative">
-                                                    <span className="absolute top-0 left-0 bg-slate-800 text-white text-[8px] px-1.5 py-0.5 font-bold rounded-tl-lg rounded-br-lg z-10 opacity-90">조치 전</span>
-                                                    <img src={c.image} onClick={() => setExpandedImage(c.image)} className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border cursor-pointer hover:opacity-80 transition" alt="checklist before"/>
-                                                </div>
-                                            ) : (
-                                                <div className="relative w-20 h-20 sm:w-24 sm:h-24 bg-slate-100 rounded-lg flex items-center justify-center text-slate-300">
-                                                    <span className="absolute top-0 left-0 bg-slate-800 text-white text-[8px] px-1.5 py-0.5 font-bold rounded-tl-lg rounded-br-lg z-10 opacity-90">조치 전</span>
-                                                    <i className="fa-solid fa-image text-xl sm:text-2xl"></i>
-                                                </div>
-                                            )}
-                                            
-                                            {c.isCompleted && c.completedImage && (
-                                                <div className="relative animate-fade-in-down">
-                                                    <span className="absolute top-0 left-0 bg-emerald-500 text-white text-[8px] px-1.5 py-0.5 font-bold rounded-tl-lg rounded-br-lg z-10 opacity-90">조치 후</span>
-                                                    <img src={c.completedImage} onClick={() => setExpandedImage(c.completedImage)} className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border-2 border-emerald-400 cursor-pointer hover:opacity-80 transition" alt="checklist after"/>
-                                                </div>
-                                            )}
+                                {/* 공종별 점검 현황 통계 (필터 기능) */}
+                                {Object.keys(tradeStats).length > 0 && (
+                                    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+                                        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-3">
+                                            <i className="fa-solid fa-chart-pie text-blue-500"></i> 공종별 필터
+                                        </h3>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button 
+                                                onClick={() => setSelectedTradeFilter(null)}
+                                                className={`px-3 py-2 rounded-lg text-xs font-bold transition border shadow-sm ${selectedTradeFilter === null ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                                            >전체보기</button>
+                                            {Object.entries(tradeStats).sort((a,b) => b[1].total - a[1].total).map(([trade, stat]) => (
+                                                <button 
+                                                    key={trade} 
+                                                    onClick={() => setSelectedTradeFilter(selectedTradeFilter === trade ? null : trade)}
+                                                    className={`px-3 py-2 rounded-lg border shadow-sm flex items-center gap-2 transition ${selectedTradeFilter === trade ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'}`}
+                                                >
+                                                    <span className="text-xs font-bold">{trade}</span>
+                                                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${selectedTradeFilter === trade ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-600'}`}>{stat.total}건</span>
+                                                </button>
+                                            ))}
                                         </div>
-
-                                        <div className="flex-1 flex flex-col min-w-0">
-                                            <div className="flex flex-wrap justify-between items-start mb-1.5 gap-y-2 gap-x-1">
-                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                    <span className="text-xs font-black text-slate-400">#{checklists.length - idx}</span>
-                                                    <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 whitespace-nowrap">{c.trade}</span>
-                                                </div>
-                                                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-                                                    {/* 완료/해제 버튼 클릭 액션 분기 */}
-                                                    <button 
-                                                        onClick={() => {
-                                                            if (c.isCompleted) handleToggleChecklist(c.id, false); // 완료 해제
-                                                            else { setCompletingChecklist(c); setCompletedImg(null); } // 완료 모달 열기
-                                                        }} 
-                                                        className={`whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition border ${c.isCompleted ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-500 hover:text-emerald-600 shadow-sm'}`}
-                                                    >
-                                                        {c.isCompleted ? <><i className="fa-solid fa-check-double mr-1"></i> 완료됨</> : <><i className="fa-solid fa-check mr-1"></i> 완료 처리</>}
-                                                    </button>
-                                                    <button onClick={()=>{setEditingChecklist(c); setEditImg(c.image || null);}} className="text-slate-300 hover:text-blue-500 transition p-1 shrink-0" title="수정"><i className="fa-solid fa-pen"></i></button>
-                                                    <button onClick={()=>handleDeleteChecklist(c.id)} className="text-slate-300 hover:text-rose-500 transition p-1 shrink-0" title="삭제"><i className="fa-solid fa-trash-can"></i></button>
-                                                </div>
-                                            </div>
-                                            <div className="text-xs font-bold text-slate-500 mb-1 flex items-center gap-1">
-                                                <i className="fa-solid fa-location-dot text-rose-400 shrink-0"></i> 
-                                                <span className="truncate">{c.location}</span>
-                                            </div>
-                                            <p className="text-sm font-bold text-slate-800 leading-snug flex-1 mb-2 line-clamp-3">{c.content}</p>
-                                            
-                                            <div className="mt-auto flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium bg-slate-100 px-2 py-1.5 rounded w-full">
-                                                <span className="text-slate-500 whitespace-nowrap">등록: {c.date}</span>
-                                                <span className="text-slate-300 hidden sm:inline">|</span>
-                                                <span className={`${c.isCompleted ? 'text-slate-500' : 'text-rose-500 font-bold'} whitespace-nowrap`}>예정: {c.dueDate}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                                {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).length === 0 && (
-                                    <div className="col-span-1 md:col-span-2 bg-white rounded-2xl border border-dashed border-slate-300 text-center py-16">
-                                        <i className="fa-regular fa-clipboard text-4xl text-slate-300 mb-3"></i>
-                                        <p className="text-slate-500 font-bold">등록된 체크리스트가 없습니다.</p>
                                     </div>
                                 )}
-                            </div>
-                        </div>
 
-                        {/* 조치 완료 처리 모달 */}
+                                {/* 리스트 출력 영역 */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                                    {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).map((c, idx) => {
+                                        // 상태 분류: 완료(completed) / 원청 확인 대기(pending) / 미조치(incomplete)
+                                        const isCompleted = c.isCompleted;
+                                        const isPending = !c.isCompleted && c.isPendingApproval;
+                                        const isIncomplete = !c.isCompleted && !c.isPendingApproval;
+
+                                        return (
+                                        <div key={c.id} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all ${isCompleted ? 'opacity-60 grayscale bg-slate-50' : isPending ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200 hover:border-blue-200'}`}>
+                                            
+                                            {/* 이미지 썸네일 영역 */}
+                                            <div className="flex flex-col gap-2 shrink-0">
+                                                {c.image ? (
+                                                    <div className="relative">
+                                                        <span className="absolute top-0 left-0 bg-slate-800 text-white text-[8px] px-1.5 py-0.5 font-bold rounded-tl-lg rounded-br-lg z-10 opacity-90">지시/점검</span>
+                                                        <img src={c.image} onClick={() => setExpandedImage(c.image)} className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border cursor-pointer hover:opacity-80 transition" alt="checklist before"/>
+                                                    </div>
+                                                ) : (
+                                                    <div className="relative w-20 h-20 sm:w-24 sm:h-24 bg-slate-100 rounded-lg flex items-center justify-center text-slate-300">
+                                                        <span className="absolute top-0 left-0 bg-slate-800 text-white text-[8px] px-1.5 py-0.5 font-bold rounded-tl-lg rounded-br-lg z-10 opacity-90">사진없음</span>
+                                                        <i className="fa-solid fa-image text-xl sm:text-2xl"></i>
+                                                    </div>
+                                                )}
+                                                
+                                                {(isCompleted || isPending) && c.completedImage && (
+                                                    <div className="relative animate-fade-in-down">
+                                                        <span className={`absolute top-0 left-0 text-white text-[8px] px-1.5 py-0.5 font-bold rounded-tl-lg rounded-br-lg z-10 opacity-90 ${isCompleted ? 'bg-emerald-500' : 'bg-amber-500'}`}>{isCompleted ? '조치 완료' : '조치 사진'}</span>
+                                                        <img src={c.completedImage} onClick={() => setExpandedImage(c.completedImage)} className={`w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border-2 cursor-pointer hover:opacity-80 transition ${isCompleted ? 'border-emerald-400' : 'border-amber-400'}`} alt="checklist after"/>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="flex-1 flex flex-col min-w-0">
+                                                <div className="flex flex-wrap justify-between items-start mb-1.5 gap-y-2 gap-x-1">
+                                                    <div className="flex items-center gap-1.5 shrink-0">
+                                                        <span className="text-xs font-black text-slate-400">#{checklists.length - idx}</span>
+                                                        <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 whitespace-nowrap">{c.trade}</span>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                                                        {isMaster ? (
+                                                            <>
+                                                                {isPending ? (
+                                                                    <>
+                                                                        <button onClick={() => handleApprove(c.id)} className="whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm">승인</button>
+                                                                        <button onClick={() => handleReject(c.id)} className="whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition bg-rose-50 text-rose-500 border border-rose-200 hover:bg-rose-100 shadow-sm">반려</button>
+                                                                    </>
+                                                                ) : (
+                                                                    <button 
+                                                                        onClick={() => {
+                                                                            if (isCompleted) handleToggleChecklist(c.id, false); 
+                                                                            else { setCompletingChecklist(c); setCompletedImg(null); }
+                                                                        }} 
+                                                                        className={`whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition border shadow-sm ${isCompleted ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-500 hover:text-emerald-600'}`}
+                                                                    >
+                                                                        {isCompleted ? <><i className="fa-solid fa-check-double mr-1"></i> 완료됨</> : <><i className="fa-solid fa-check mr-1"></i> 조치 완료 (Master)</>}
+                                                                    </button>
+                                                                )}
+                                                                <button onClick={()=>{setEditingChecklist(c); setEditImg(c.image || null);}} className="text-slate-300 hover:text-blue-500 transition p-1 shrink-0" title="수정"><i className="fa-solid fa-pen"></i></button>
+                                                                <button onClick={()=>handleDeleteChecklist(c.id)} className="text-slate-300 hover:text-rose-500 transition p-1 shrink-0" title="삭제"><i className="fa-solid fa-trash-can"></i></button>
+                                                            </>
+                                                        ) : (
+                                                            // 협력사는 조치 완료 요청만 가능 (수정/삭제 권한 없음)
+                                                            isIncomplete ? (
+                                                                <button onClick={() => { setCompletingChecklist(c); setCompletedImg(null); }} className="whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition border bg-white text-slate-500 border-slate-300 hover:border-blue-500 hover:text-blue-600 shadow-sm">
+                                                                    <i className="fa-solid fa-camera mr-1"></i> 조치 완료
+                                                                </button>
+                                                            ) : isPending ? (
+                                                                <span className="whitespace-nowrap px-2 py-1 rounded text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 shadow-sm animate-pulse">
+                                                                    원청 확인 대기중
+                                                                </span>
+                                                            ) : (
+                                                                <span className="whitespace-nowrap px-2 py-1 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 shadow-sm">
+                                                                    <i className="fa-solid fa-check-double mr-1"></i> 조치 승인됨
+                                                                </span>
+                                                            )
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="text-xs font-bold text-slate-500 mb-1 flex items-center gap-1">
+                                                    <i className="fa-solid fa-location-dot text-rose-400 shrink-0"></i> 
+                                                    <span className="truncate">{c.location}</span>
+                                                </div>
+                                                <p className="text-sm font-bold text-slate-800 leading-snug flex-1 mb-2 line-clamp-3">{c.content}</p>
+                                                
+                                                <div className="mt-auto flex flex-wrap gap-x-2 gap-y-1 text-[10px] font-medium bg-slate-100 px-2 py-1.5 rounded w-full">
+                                                    <span className="text-slate-500 whitespace-nowrap">등록: {c.date}</span>
+                                                    <span className="text-slate-300 hidden sm:inline">|</span>
+                                                    <span className={`${isCompleted ? 'text-slate-500' : 'text-rose-500 font-bold'} whitespace-nowrap`}>예정: {c.dueDate}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )})}
+                                    {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).length === 0 && (
+                                        <div className="col-span-1 md:col-span-2 bg-white rounded-2xl border border-dashed border-slate-300 text-center py-16">
+                                            <i className="fa-regular fa-clipboard text-4xl text-slate-300 mb-3"></i>
+                                            <p className="text-slate-500 font-bold">등록된 체크리스트가 없습니다.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 설정 탭 (원청 전용) */}
+                        {activeTab === 'settings' && isMaster && (
+                            <div className="space-y-6 animate-fade-in max-w-2xl mx-auto">
+                                <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 md:p-8">
+                                    <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><i className="fa-solid fa-lock text-slate-800"></i> 비밀번호 설정</h2>
+                                    <form onSubmit={(e) => { e.preventDefault(); handleUpdatePasswords(passwords); }} className="space-y-5">
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold text-slate-600">원청관리자 (Master) 접속 비밀번호</label>
+                                            <input type="text" className="w-full p-3 border border-slate-200 rounded-xl text-sm bg-slate-50 font-bold text-emerald-600 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition" value={passwords['원청관리자'] || ''} onChange={e => setPasswords({...passwords, '원청관리자': e.target.value})} required />
+                                            <p className="text-[10px] text-slate-400 font-bold">* 협력사는 비밀번호 없이 접속 가능하게 설계되어 있습니다.</p>
+                                        </div>
+                                        <div className="pt-4">
+                                            <button type="submit" className="bg-slate-800 hover:bg-black transition text-white px-8 py-3 rounded-xl font-bold shadow-lg w-full"><i className="fa-solid fa-floppy-disk mr-2"></i>비밀번호 변경 저장</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 알림 내역 패널 모달 (원청 전용) */}
+                        {isNotifOpen && isMaster && (
+                            <div className="fixed inset-0 z-50 bg-black/60 flex justify-end">
+                                <div className="bg-white w-full max-w-sm h-full shadow-2xl flex flex-col animate-slide-in-right">
+                                    <div className="p-5 border-b flex justify-between items-center bg-slate-900 text-white shadow-md">
+                                        <h3 className="font-bold flex items-center gap-2"><i className="fa-solid fa-bell text-amber-400"></i> 알림 내역 기록</h3>
+                                        <button onClick={() => setIsNotifOpen(false)} className="text-slate-400 hover:text-rose-400 transition text-2xl"><i className="fa-solid fa-xmark"></i></button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+                                        {notifications.length === 0 ? (
+                                            <div className="text-center py-16 text-slate-400">
+                                                <i className="fa-regular fa-bell-slash text-4xl mb-4"></i>
+                                                <p className="text-sm font-bold">기록된 알림 내역이 없습니다.</p>
+                                            </div>
+                                        ) : (
+                                            notifications.map(n => (
+                                                <div key={n.id} className={`p-4 rounded-xl border shadow-sm relative ${n.type === 'request' ? 'bg-blue-50 border-blue-200' : n.type === 'approve' ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
+                                                    <div className="flex items-start gap-3">
+                                                        <div className="shrink-0 mt-0.5 text-lg">
+                                                            {n.type === 'request' && <i className="fa-solid fa-circle-exclamation text-blue-500"></i>}
+                                                            {n.type === 'approve' && <i className="fa-solid fa-circle-check text-emerald-500"></i>}
+                                                            {n.type === 'reject' && <i className="fa-solid fa-circle-xmark text-rose-500"></i>}
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-xs font-bold text-slate-800 leading-snug mb-1.5">{n.message}</p>
+                                                            <p className="text-[10px] font-bold text-slate-400">{new Date(n.createdAt).toLocaleString('ko-KR')}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 조치 완료 처리 모달 (협력사, 원청 공통) */}
                         {completingChecklist && (
                             <div className="fixed inset-0 z-50 bg-black/60 flex justify-center items-center p-4">
                                 <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-fade-in-down">
                                     <div className="flex justify-between items-center mb-4">
-                                        <h3 className="text-lg font-bold text-slate-800"><i className="fa-solid fa-clipboard-check text-emerald-500"></i> 조치 완료 처리</h3>
+                                        <h3 className="text-lg font-bold text-slate-800"><i className="fa-solid fa-clipboard-check text-emerald-500"></i> 조치 완료 사진 첨부</h3>
                                         <button onClick={() => {setCompletingChecklist(null); setCompletedImg(null);}} className="text-slate-400 hover:text-rose-500 text-xl"><i className="fa-solid fa-xmark"></i></button>
                                     </div>
                                     <form onSubmit={handleCompleteSubmit} className="space-y-4">
@@ -521,18 +727,18 @@
                                         </div>
                                         
                                         <div>
-                                            <label className="text-[10px] font-bold text-slate-500 mb-2 block">조치 완료 사진 첨부 (선택)</label>
+                                            <label className="text-[10px] font-bold text-rose-500 mb-2 block">* 조치 후 결과 사진을 필수로 첨부해주세요.</label>
                                             <div className="flex flex-col gap-3">
                                                 {completedImg ? (
                                                     <div className="relative inline-block w-full">
-                                                        <img src={completedImg} className="w-full h-32 object-cover rounded-lg border-2 border-emerald-300 shadow-sm" alt="completed preview"/>
+                                                        <img src={completedImg} className="w-full h-40 object-cover rounded-lg border-2 border-emerald-300 shadow-sm" alt="completed preview"/>
                                                         <button type="button" onClick={()=>{setCompletedImg(null); if(completedFileRef.current) completedFileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
                                                     </div>
                                                 ) : (
-                                                    <label className="bg-white border-2 border-dashed border-emerald-200 text-emerald-600 text-sm font-bold p-6 rounded-lg flex flex-col justify-center items-center cursor-pointer hover:bg-emerald-50 hover:border-emerald-300 transition w-full h-32">
-                                                        <i className="fa-solid fa-camera text-2xl mb-2"></i>
-                                                        사진 추가하기
-                                                        <input type="file" className="hidden" accept="image/*" onChange={handleCompletedImg} ref={completedFileRef}/>
+                                                    <label className="bg-white border-2 border-dashed border-emerald-200 text-emerald-600 text-sm font-bold p-6 rounded-lg flex flex-col justify-center items-center cursor-pointer hover:bg-emerald-50 hover:border-emerald-300 transition w-full h-40">
+                                                        <i className="fa-solid fa-camera text-3xl mb-2"></i>
+                                                        결과 사진 촬영 및 첨부
+                                                        <input type="file" className="hidden" accept="image/*" onChange={handleCompletedImg} ref={completedFileRef} required/>
                                                     </label>
                                                 )}
                                             </div>
@@ -540,7 +746,9 @@
                                         
                                         <div className="flex gap-2 mt-6">
                                             <button type="button" onClick={() => {setCompletingChecklist(null); setCompletedImg(null);}} className="flex-1 bg-slate-200 text-slate-700 font-bold py-3 rounded-lg hover:bg-slate-300 transition">취소</button>
-                                            <button type="submit" className="flex-1 bg-emerald-500 text-white font-bold py-3 rounded-lg shadow hover:bg-emerald-600 transition">완료 저장</button>
+                                            <button type="submit" disabled={!completedImg} className={`flex-1 font-bold py-3 rounded-lg shadow transition ${completedImg ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-emerald-200 text-white cursor-not-allowed'}`}>
+                                                {isMaster ? '완료 저장' : '원청 확인 요청'}
+                                            </button>
                                         </div>
                                     </form>
                                 </div>
@@ -555,8 +763,8 @@
                             </div>
                         )}
 
-                        {/* 수정 모달 */}
-                        {editingChecklist && (
+                        {/* 수정 모달 (원청 전용) */}
+                        {editingChecklist && isMaster && (
                             <div className="fixed inset-0 z-50 bg-black/60 flex justify-center items-center p-4">
                                 <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-2xl animate-fade-in-down max-h-[90vh] overflow-y-auto">
                                     <div className="flex justify-between items-center mb-4">
@@ -591,7 +799,7 @@
                                             <input type="text" className="w-full p-2.5 border rounded-lg text-sm bg-slate-50 focus:bg-white focus:border-blue-400 outline-none" value={editingChecklist.content} onChange={e=>setEditingChecklist({...editingChecklist, content:e.target.value})} required/>
                                         </div>
                                         <div className="md:col-span-2">
-                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">사진 수정</label>
+                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">조치 전 사진 수정</label>
                                             <div className="flex gap-4 items-start">
                                                 <div className="relative">
                                                     {editImg ? (
