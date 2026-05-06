@@ -258,6 +258,26 @@
                 }
             };
 
+            // 알림 개별 삭제 핸들러
+            const handleDeleteNotification = async (e, id) => {
+                e.stopPropagation(); // 스크롤 이동 방지
+                if(!user || !isMaster) return;
+                if (confirm('이 알림 기록을 삭제하시겠습니까?')) {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', id));
+                }
+            };
+
+            // 알림 전체 삭제 핸들러
+            const handleDeleteAllNotifications = async () => {
+                if(!user || !isMaster || notifications.length === 0) return;
+                if (confirm('모든 알림 기록을 삭제하시겠습니까?')) {
+                    for (const n of notifications) {
+                        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', n.id));
+                    }
+                    showToast('모든 알림 기록이 삭제되었습니다.');
+                }
+            };
+
             // 1. 체크리스트 신규 등록
             const onSubmit = async (e) => {
                 e.preventDefault();
@@ -709,7 +729,12 @@
                                 <div className="bg-white w-full max-w-sm h-full shadow-2xl flex flex-col animate-slide-in-right">
                                     <div className="p-5 border-b flex justify-between items-center bg-slate-900 text-white shadow-md">
                                         <h3 className="font-bold flex items-center gap-2"><i className="fa-solid fa-bell text-amber-400"></i> 알림 내역 기록</h3>
-                                        <button onClick={() => setIsNotifOpen(false)} className="text-slate-400 hover:text-rose-400 transition text-2xl"><i className="fa-solid fa-xmark"></i></button>
+                                        <div className="flex items-center gap-3">
+                                            {notifications.length > 0 && (
+                                                <button onClick={handleDeleteAllNotifications} className="text-[10px] font-bold text-slate-300 hover:text-white transition bg-slate-700 px-2 py-1.5 rounded-lg border border-slate-600">전체 삭제</button>
+                                            )}
+                                            <button onClick={() => setIsNotifOpen(false)} className="text-slate-400 hover:text-rose-400 transition text-2xl"><i className="fa-solid fa-xmark"></i></button>
+                                        </div>
                                     </div>
                                     <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
                                         {notifications.length === 0 ? (
@@ -720,7 +745,10 @@
                                         ) : (
                                             notifications.map(n => (
                                                 <div key={n.id} onClick={() => handleNotificationClick(n.targetId)} className={`p-4 rounded-xl border shadow-sm relative cursor-pointer hover:opacity-80 transition-all ${n.type === 'request' ? 'bg-blue-50 border-blue-200 hover:shadow-blue-200' : n.type === 'approve' ? 'bg-emerald-50 border-emerald-200 hover:shadow-emerald-200' : 'bg-rose-50 border-rose-200 hover:shadow-rose-200'}`}>
-                                                    <div className="flex items-start gap-3">
+                                                    <button onClick={(e) => handleDeleteNotification(e, n.id)} className="absolute top-2 right-2 text-slate-400 hover:text-rose-500 transition p-1.5 rounded-md hover:bg-white" title="알림 삭제">
+                                                        <i className="fa-solid fa-trash-can text-xs"></i>
+                                                    </button>
+                                                    <div className="flex items-start gap-3 pr-6">
                                                         <div className="shrink-0 mt-0.5 text-lg">
                                                             {n.type === 'request' && <i className="fa-solid fa-circle-exclamation text-blue-500"></i>}
                                                             {n.type === 'approve' && <i className="fa-solid fa-circle-check text-emerald-500"></i>}
