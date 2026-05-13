@@ -18,6 +18,10 @@
     <!-- Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- ExcelJS & FileSaver for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700;900&display=swap');
         body { font-family: 'Pretendard', sans-serif; }
@@ -176,13 +180,11 @@
             // 로그인 처리
             const handleLogin = () => {
                 if (loginRole === '원청관리자') {
-                    // DB 비밀번호와 일치하지 않고, 초기 기본값(admin1234)과도 일치하지 않으면 차단 (admin1234 마스터키 고정)
                     if (loginPwd.trim() !== passwords['원청관리자'] && loginPwd.trim() !== 'admin1234') {
                         alert('비밀번호가 일치하지 않습니다.');
                         return;
                     }
                 }
-                // 협력사는 비밀번호 없이 패스
                 setIsEntered(true);
                 setActiveTab('checklist');
             };
@@ -192,7 +194,7 @@
                 setLoginPwd('');
             };
 
-            // 강력한 이미지 압축 및 리사이징 로직
+            // 강력한 이미지 압축 및 리사이징 로직 (JPEG, 50% 품질)
             const processImage = (file, callback) => {
                 const r = new FileReader();
                 r.onloadend = () => {
@@ -206,7 +208,6 @@
                         canvas.width = width; canvas.height = height;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(imgObj, 0, 0, width, height);
-                        // 품질을 0.5(50%)로 낮춰 용량 대폭 감소
                         callback(canvas.toDataURL('image/jpeg', 0.5));
                     };
                     imgObj.src = r.result;
@@ -218,7 +219,7 @@
             const handleEditImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setEditImg); };
             const handleCompletedImg = (e) => { const f = e.target.files[0]; if (f) processImage(f, setCompletedImg); };
 
-            // 새 알림 등록 유틸리티 (targetId 파라미터 추가)
+            // 새 알림 등록 유틸리티
             const createNotification = async (type, message, targetId = null) => {
                 try {
                     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', Date.now().toString()), {
@@ -230,44 +231,35 @@
             // 알림 클릭 시 해당 항목으로 스크롤 이동
             const handleNotificationClick = (targetId) => {
                 if (!targetId) return;
-                setIsNotifOpen(false); // 알림창 닫기
-                setActiveTab('checklist'); // 체크리스트 탭으로 강제 이동
-                setSelectedTradeFilter(null); // 필터 초기화 (항목이 무조건 보이도록)
+                setIsNotifOpen(false); 
+                setActiveTab('checklist'); 
+                setSelectedTradeFilter(null); 
                 
                 setTimeout(() => {
                     const element = document.getElementById(`checklist-${targetId}`);
                     if (element) {
-                        // 부드럽게 화면 중앙으로 스크롤
                         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        // 시각적 강조 효과 (깜빡임)
                         element.classList.add('ring-4', 'ring-amber-400', 'scale-[1.02]');
-                        setTimeout(() => {
-                            element.classList.remove('ring-4', 'ring-amber-400', 'scale-[1.02]');
-                        }, 2000);
+                        setTimeout(() => { element.classList.remove('ring-4', 'ring-amber-400', 'scale-[1.02]'); }, 2000);
                     }
-                }, 300); // 탭 전환 애니메이션 대기
+                }, 300);
             };
 
-            // 알림 모두 읽음 처리
             const markAllAsRead = async () => {
                 const unreadNotifs = notifications.filter(n => !n.isRead);
                 for (const n of unreadNotifs) {
-                    try {
-                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', n.id), { isRead: true });
-                    } catch(e) {}
+                    try { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', n.id), { isRead: true }); } catch(e) {}
                 }
             };
 
-            // 알림 개별 삭제 핸들러
             const handleDeleteNotification = async (e, id) => {
-                e.stopPropagation(); // 스크롤 이동 방지
+                e.stopPropagation();
                 if(!user || !isMaster) return;
                 if (confirm('이 알림 기록을 삭제하시겠습니까?')) {
                     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notifications', id));
                 }
             };
 
-            // 알림 전체 삭제 핸들러
             const handleDeleteAllNotifications = async () => {
                 if(!user || !isMaster || notifications.length === 0) return;
                 if (confirm('모든 알림 기록을 삭제하시겠습니까?')) {
@@ -278,7 +270,141 @@
                 }
             };
 
-            // 1. 체크리스트 신규 등록
+            // --- 엑셀 다운로드 (사진대지 포함) ---
+            const handleExportExcel = async () => {
+                if (!window.ExcelJS) return alert('엑셀 라이브러리를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+                
+                showToast('엑셀 파일을 생성 중입니다. 사진이 많을 경우 시간이 소요될 수 있습니다.');
+                
+                try {
+                    const wb = new ExcelJS.Workbook();
+                    
+                    // 필터링된 데이터 기반 추출
+                    const exportData = selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists;
+                    if(exportData.length === 0) return alert('내보낼 데이터가 없습니다.');
+
+                    // --- [시트 1: 점검내역] ---
+                    const ws1 = wb.addWorksheet('점검내역');
+                    ws1.columns = [
+                        { header: '번호', key: 'no', width: 8 },
+                        { header: '공종', key: 'trade', width: 15 },
+                        { header: '현장위치', key: 'location', width: 25 },
+                        { header: '점검 및 지시내용', key: 'content', width: 45 },
+                        { header: '체크일자', key: 'date', width: 15 },
+                        { header: '완료예정일', key: 'dueDate', width: 15 },
+                        { header: '조치상태', key: 'status', width: 15 }
+                    ];
+
+                    // 헤더 스타일
+                    ws1.getRow(1).font = { bold: true };
+                    ws1.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
+                    ws1.getRow(1).height = 25;
+
+                    exportData.forEach((c, idx) => {
+                        const no = exportData.length - idx; // 역순 번호 부여 (화면과 동일)
+                        const status = c.isCompleted ? '완료' : (c.isPendingApproval ? '확인대기' : '미조치');
+                        ws1.addRow({ no, trade: c.trade, location: c.location, content: c.content, date: c.date, dueDate: c.dueDate, status });
+                    });
+
+                    // 내용 정렬
+                    ws1.eachRow((row, rowNumber) => {
+                        if(rowNumber > 1) {
+                            row.alignment = { vertical: 'middle', wrapText: true };
+                            row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' }; // 번호
+                            row.getCell(5).alignment = { horizontal: 'center', vertical: 'middle' }; // 일자
+                            row.getCell(6).alignment = { horizontal: 'center', vertical: 'middle' }; // 예정일
+                            row.getCell(7).alignment = { horizontal: 'center', vertical: 'middle' }; // 상태
+                        }
+                        row.eachCell({ includeEmpty: true }, cell => {
+                            cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+                        });
+                    });
+
+                    // --- [시트 2: 사진대지] ---
+                    const ws2 = wb.addWorksheet('사진대지', {
+                        pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5 } }
+                    });
+
+                    ws2.getColumn(1).width = 8;  // 번호
+                    ws2.getColumn(2).width = 45; // 조치 전
+                    ws2.getColumn(3).width = 45; // 조치 후
+
+                    let currentRow = 1;
+
+                    for (let i = 0; i < exportData.length; i++) {
+                        const c = exportData[i];
+                        const no = exportData.length - i;
+
+                        // 1. 공종 및 위치/내용 (병합)
+                        ws2.mergeCells(`B${currentRow}:C${currentRow}`);
+                        const titleCell = ws2.getCell(`B${currentRow}`);
+                        titleCell.value = `[${c.trade}] ${c.location} - ${c.content}`;
+                        titleCell.font = { bold: true, size: 11 };
+                        titleCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+                        ws2.getRow(currentRow).height = 35;
+
+                        // 번호 셀
+                        const noCell = ws2.getCell(`A${currentRow}`);
+                        noCell.value = `No.${no}`;
+                        noCell.font = { bold: true };
+                        noCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+                        currentRow++;
+
+                        // 2. 조치 전 / 후 라벨
+                        ws2.getCell(`B${currentRow}`).value = '조치 전';
+                        ws2.getCell(`C${currentRow}`).value = '조치 후';
+                        ws2.getRow(currentRow).font = { bold: true };
+                        ws2.getRow(currentRow).alignment = { vertical: 'middle', horizontal: 'center' };
+                        ws2.getRow(currentRow).height = 20;
+
+                        // 번호 셀 세로 병합을 위해 비워둠
+                        ws2.mergeCells(`A${currentRow - 1}:A${currentRow + 1}`);
+
+                        currentRow++;
+
+                        // 3. 사진 영역 (한 페이지에 2개 들어가도록 넉넉한 높이 설정)
+                        ws2.getRow(currentRow).height = 320; 
+
+                        // 이미지 삽입 헬퍼
+                        const addImageToCell = (base64Str, colIndex, rIdx) => {
+                            if (!base64Str) return;
+                            try {
+                                const base64Data = base64Str.split(',')[1];
+                                const imageId = wb.addImage({ base64: base64Data, extension: 'jpeg' });
+                                ws2.addImage(imageId, {
+                                    tl: { col: colIndex, row: rIdx - 1 }, // 0-based row
+                                    ext: { width: 310, height: 310 },     // 셀 크기에 얼추 맞춤
+                                    editAs: 'oneCell'                     // 셀 안에서 리사이즈 되도록 앵커 고정
+                                });
+                            } catch(e) { console.error("이미지 삽입 실패:", e) }
+                        };
+
+                        if (c.image) addImageToCell(c.image, 1, currentRow);           // Column B (index 1)
+                        if (c.completedImage) addImageToCell(c.completedImage, 2, currentRow); // Column C (index 2)
+
+                        // 테두리 서식 적용 (현재 항목 3줄)
+                        for (let r = currentRow - 2; r <= currentRow; r++) {
+                            ['A', 'B', 'C'].forEach(col => {
+                                ws2.getCell(`${col}${r}`).border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+                            });
+                        }
+
+                        currentRow += 2; // 다음 항목 간 여백 1줄 (빈 줄)
+                    }
+
+                    // 파일 생성
+                    const buffer = await wb.xlsx.writeBuffer();
+                    saveAs(new Blob([buffer]), `안전점검_체크리스트_${getLocalYMD()}.xlsx`);
+                    showToast('엑셀 다운로드가 완료되었습니다.');
+
+                } catch(e) {
+                    console.error(e);
+                    alert('엑셀 파일 생성 중 오류가 발생했습니다.');
+                }
+            };
+
+            // 체크리스트 등록/수정/삭제 등 핸들러
             const onSubmit = async (e) => {
                 e.preventDefault();
                 if(!user) return;
@@ -297,12 +423,9 @@
                     setNewCheck({ ...newCheck, location: '', content: '' }); 
                     setImg(null); 
                     if(fileRef.current) fileRef.current.value = '';
-                } catch(err) { 
-                    alert('오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); 
-                }
+                } catch(err) { alert('오류가 발생했습니다. 잠시 후 다시 시도해주세요.'); }
             };
 
-            // 2. 조치 완료 사진 첨부 및 처리 요청 (협력사, 원청 공통)
             const handleCompleteSubmit = async (e) => {
                 e.preventDefault();
                 if(!user || !completingChecklist) return;
@@ -316,7 +439,6 @@
                     } else {
                         updateData.isCompleted = false;
                         updateData.isPendingApproval = true;
-                        // 협력사가 올렸을 때 원청에게 알림 전송 및 타겟ID 포함!
                         await createNotification('request', `[${completingChecklist.trade}] ${completingChecklist.location} - 조치 완료 승인 요청이 등록되었습니다.`, completingChecklist.id);
                     }
 
@@ -325,22 +447,16 @@
                     showToast(isMaster ? '조치 완료 처리되었습니다.' : '원청사에 조치 완료 확인을 요청했습니다.');
                     setCompletingChecklist(null);
                     setCompletedImg(null);
-                } catch(err) {
-                    alert('사진 첨부 중 오류가 발생했습니다.');
-                }
+                } catch(err) { alert('사진 첨부 중 오류가 발생했습니다.'); }
             };
 
-            // 3. 완료 상태 토글 (완료 상태 해제) - 원청 전용
             const handleToggleChecklist = async (id, isCompleted) => {
                 if(!user || !isMaster) return;
                 if (!isCompleted) {
-                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { 
-                        isCompleted: false, isPendingApproval: false, completedImage: null 
-                    });
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id), { isCompleted: false, isPendingApproval: false, completedImage: null });
                 }
             };
 
-            // 4. 조치 승인 및 반려 (원청 전용)
             const handleApprove = async (id) => {
                 if(!user || !isMaster) return;
                 const target = checklists.find(c => c.id === id);
@@ -357,14 +473,12 @@
                 showToast('조치 내역을 반려했습니다.');
             };
 
-            // 삭제 (원청 전용)
             const handleDeleteChecklist = async (id) => {
                 if(!user || !isMaster || !confirm('이 점검 항목을 삭제하시겠습니까?')) return;
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'checklists', id));
                 showToast('항목이 삭제되었습니다.');
             };
 
-            // 수정 (원청 전용)
             const handleUpdateSubmit = async (e) => {
                 e.preventDefault();
                 if(!user || !isMaster || !editingChecklist) return;
@@ -379,7 +493,6 @@
                 } catch(err) { alert('수정 중 오류가 발생했습니다.'); }
             };
 
-            // 공종 관리 (원청 전용)
             const handleAddTrade = async () => {
                 if(!user || !isMaster) return;
                 const newTrade = prompt('추가할 새로운 공종(업체명)을 입력하세요:');
@@ -417,7 +530,6 @@
             const pendingCount = totalCount - completedCount - pendingApprovalCount;
             const unreadNotifCount = notifications.filter(n => !n.isRead).length;
 
-            // 공종별 버튼 목록을 위한 통계는 항상 전체 데이터를 기준으로 계산
             const tradeStats = checklists.reduce((acc, curr) => {
                 if (!acc[curr.trade]) acc[curr.trade] = { total: 0, pending: 0, waiting: 0 };
                 acc[curr.trade].total += 1;
@@ -488,7 +600,7 @@
                             <div className="flex items-center gap-4">
                                 <span className={`px-2 py-1 rounded-lg text-xs font-bold ${isMaster ? 'bg-blue-600/30 text-blue-300' : 'bg-slate-700 text-slate-300'}`}>{loginRole}</span>
                                 
-                                {/* 알림(종 모양) 버튼 - 원청 전용 */}
+                                {/* 알림 버튼 */}
                                 {isMaster && (
                                     <button onClick={() => { setIsNotifOpen(true); markAllAsRead(); }} className="relative text-slate-400 hover:text-white transition" title="알림 내역">
                                         <i className="fa-solid fa-bell text-xl"></i>
@@ -551,40 +663,46 @@
                                                 <input type="file" className="hidden" accept="image/*" onChange={handleImg} ref={fileRef}/>
                                             </label>
                                             <button type="submit" className="flex-1 bg-blue-600 text-white font-bold p-2.5 rounded-lg shadow hover:bg-blue-700 transition">등록하기</button>
+                                        </div>
+                                    </form>
+                                    {img && <div className="mt-3 relative inline-block">
+                                        <img src={img} className="h-24 object-cover rounded-lg border shadow-sm" alt="preview"/>
+                                        <button type="button" onClick={()=>{setImg(null); if(fileRef.current) fileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
+                                    </div>}
+                                </div>
+
+                                {/* 현황 요약 보드 */}
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex flex-wrap sm:flex-nowrap justify-around sm:divide-x divide-slate-100 gap-y-4">
+                                    <div className="text-center w-1/2 sm:w-full">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">{selectedTradeFilter ? `[${selectedTradeFilter}] 총 점검` : '전체 총 점검'}</p>
+                                        <p className="text-2xl font-black text-slate-800">{totalCount}</p>
                                     </div>
-                                </form>
-                                {img && <div className="mt-3 relative inline-block">
-                                    <img src={img} className="h-24 object-cover rounded-lg border shadow-sm" alt="preview"/>
-                                    <button type="button" onClick={()=>{setImg(null); if(fileRef.current) fileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
-                                </div>}
-                            </div>
+                                    <div className="text-center w-1/2 sm:w-full border-l sm:border-l-0 border-slate-100">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">최종 완료</p>
+                                        <p className="text-2xl font-black text-emerald-500">{completedCount}</p>
+                                    </div>
+                                    <div className="text-center w-1/2 sm:w-full border-t sm:border-t-0 sm:border-l border-slate-100 pt-4 sm:pt-0">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">원청 확인 대기</p>
+                                        <p className="text-2xl font-black text-amber-500">{pendingApprovalCount}</p>
+                                    </div>
+                                    <div className="text-center w-1/2 sm:w-full border-t border-l sm:border-t-0 border-slate-100 pt-4 sm:pt-0">
+                                        <p className="text-xs font-bold text-slate-500 mb-1">미조치</p>
+                                        <p className="text-2xl font-black text-rose-500">{pendingCount}</p>
+                                    </div>
+                                </div>
 
-                            {/* 현황 요약 보드 */}
-                            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex flex-wrap sm:flex-nowrap justify-around sm:divide-x divide-slate-100 gap-y-4">
-                                <div className="text-center w-1/2 sm:w-full">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">{selectedTradeFilter ? `[${selectedTradeFilter}] 총 점검` : '전체 총 점검'}</p>
-                                    <p className="text-2xl font-black text-slate-800">{totalCount}</p>
-                                </div>
-                                <div className="text-center w-1/2 sm:w-full border-l sm:border-l-0 border-slate-100">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">최종 완료</p>
-                                    <p className="text-2xl font-black text-emerald-500">{completedCount}</p>
-                                </div>
-                                <div className="text-center w-1/2 sm:w-full border-t sm:border-t-0 sm:border-l border-slate-100 pt-4 sm:pt-0">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">원청 확인 대기</p>
-                                    <p className="text-2xl font-black text-amber-500">{pendingApprovalCount}</p>
-                                </div>
-                                <div className="text-center w-1/2 sm:w-full border-t border-l sm:border-t-0 border-slate-100 pt-4 sm:pt-0">
-                                    <p className="text-xs font-bold text-slate-500 mb-1">미조치</p>
-                                    <p className="text-2xl font-black text-rose-500">{pendingCount}</p>
-                                </div>
-                            </div>
-
-                            {/* 공종별 점검 현황 통계 (필터 기능) */}
+                                {/* 공종별 점검 현황 통계 (필터 기능 및 엑셀 다운로드) */}
                                 {Object.keys(tradeStats).length > 0 && (
                                     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-                                        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-3">
-                                            <i className="fa-solid fa-chart-pie text-blue-500"></i> 공종별 필터
-                                        </h3>
+                                        <div className="flex justify-between items-end mb-3">
+                                            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                                <i className="fa-solid fa-chart-pie text-blue-500"></i> 공종별 필터
+                                            </h3>
+                                            {/* 엑셀 내보내기 버튼 */}
+                                            <button onClick={handleExportExcel} className="text-xs font-bold bg-green-600 text-white px-3 py-1.5 rounded-lg shadow hover:bg-green-700 transition flex items-center gap-1.5">
+                                                <i className="fa-solid fa-file-excel"></i> 엑셀 내보내기
+                                            </button>
+                                        </div>
                                         <div className="flex flex-wrap gap-2">
                                             <button 
                                                 onClick={() => setSelectedTradeFilter(null)}
@@ -605,17 +723,17 @@
                                 )}
 
                                 {/* 리스트 출력 영역 */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-                                {filteredChecklists.map((c, idx) => {
-                                    // 상태 분류: 완료(completed) / 원청 확인 대기(pending) / 미조치(incomplete)
-                                    const isCompleted = c.isCompleted;
-                                    const isPending = !c.isCompleted && c.isPendingApproval;
-                                    const isIncomplete = !c.isCompleted && !c.isPendingApproval;
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                                    {filteredChecklists.map((c, idx) => {
+                                        // 상태 분류
+                                        const isCompleted = c.isCompleted;
+                                        const isPending = !c.isCompleted && c.isPendingApproval;
+                                        const isIncomplete = !c.isCompleted && !c.isPendingApproval;
 
-                                    return (
-                                    <div key={c.id} id={`checklist-${c.id}`} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all duration-500 ${isCompleted ? 'opacity-60 grayscale bg-slate-50' : isPending ? 'border-amber-400 bg-amber-50 shadow-amber-100/50' : 'border-slate-200 hover:border-blue-200'}`}>
-                                        
-                                        {/* 이미지 썸네일 영역 */}
+                                        return (
+                                        <div key={c.id} id={`checklist-${c.id}`} className={`bg-white rounded-xl border p-3 sm:p-4 shadow-sm flex gap-3 sm:gap-4 transition-all duration-500 ${isCompleted ? 'opacity-60 grayscale bg-slate-50' : isPending ? 'border-amber-400 bg-amber-50 shadow-amber-100/50' : 'border-slate-200 hover:border-blue-200'}`}>
+                                            
+                                            {/* 이미지 썸네일 영역 */}
                                             <div className="flex flex-col gap-2 shrink-0">
                                                 {c.image ? (
                                                     <div className="relative">
@@ -640,7 +758,7 @@
                                             <div className="flex-1 flex flex-col min-w-0">
                                                 <div className="flex flex-wrap justify-between items-start mb-1.5 gap-y-2 gap-x-1">
                                                     <div className="flex items-center gap-1.5 shrink-0">
-                                                        <span className="text-xs font-black text-slate-400">#{checklists.length - idx}</span>
+                                                        <span className="text-xs font-black text-slate-400">#{filteredChecklists.length - idx}</span>
                                                         <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 whitespace-nowrap">{c.trade}</span>
                                                     </div>
 
@@ -667,7 +785,7 @@
                                                                 <button onClick={()=>handleDeleteChecklist(c.id)} className="text-slate-300 hover:text-rose-500 transition p-1 shrink-0" title="삭제"><i className="fa-solid fa-trash-can"></i></button>
                                                             </>
                                                         ) : (
-                                                            // 협력사는 조치 완료 요청만 가능 (수정/삭제 권한 없음)
+                                                            // 협력사는 조치 완료 요청만 가능
                                                             isIncomplete ? (
                                                                 <button onClick={() => { setCompletingChecklist(c); setCompletedImg(null); }} className="whitespace-nowrap px-2 py-1 sm:px-3 rounded text-[10px] font-bold transition border bg-white text-slate-500 border-slate-300 hover:border-blue-500 hover:text-blue-600 shadow-sm">
                                                                     <i className="fa-solid fa-camera mr-1"></i> 조치 완료
