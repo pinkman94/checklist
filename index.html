@@ -322,12 +322,13 @@
 
                     // --- [시트 2: 사진대지] ---
                     const ws2 = wb.addWorksheet('사진대지', {
-                        pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5 } }
+                        pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5 } },
+                        properties: { defaultRowHeight: 25 }
                     });
 
-                    ws2.getColumn(1).width = 8;  // 번호
-                    ws2.getColumn(2).width = 45; // 조치 전
-                    ws2.getColumn(3).width = 45; // 조치 후
+                    ws2.getColumn(1).width = 10;  // 번호 (A)
+                    ws2.getColumn(2).width = 42;  // 조치 전 (B)
+                    ws2.getColumn(3).width = 42;  // 조치 후 (C)
 
                     let currentRow = 1;
 
@@ -338,15 +339,16 @@
                         // 1. 공종 및 위치/내용 (병합)
                         ws2.mergeCells(`B${currentRow}:C${currentRow}`);
                         const titleCell = ws2.getCell(`B${currentRow}`);
-                        titleCell.value = `[${c.trade}] ${c.location} - ${c.content}`;
-                        titleCell.font = { bold: true, size: 11 };
-                        titleCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
-                        ws2.getRow(currentRow).height = 35;
+                        titleCell.value = `[${c.trade}] ${c.location}\n- ${c.content}`;
+                        titleCell.font = { bold: true, size: 12 };
+                        titleCell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+                        ws2.getRow(currentRow).height = 40;
 
-                        // 번호 셀
+                        // 번호 셀 (세로 3칸 병합)
+                        ws2.mergeCells(`A${currentRow}:A${currentRow + 2}`);
                         const noCell = ws2.getCell(`A${currentRow}`);
                         noCell.value = `No.${no}`;
-                        noCell.font = { bold: true };
+                        noCell.font = { bold: true, size: 13 };
                         noCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
                         currentRow++;
@@ -354,41 +356,48 @@
                         // 2. 조치 전 / 후 라벨
                         ws2.getCell(`B${currentRow}`).value = '조치 전';
                         ws2.getCell(`C${currentRow}`).value = '조치 후';
-                        ws2.getRow(currentRow).font = { bold: true };
+                        ws2.getRow(currentRow).font = { bold: true, size: 12 };
                         ws2.getRow(currentRow).alignment = { vertical: 'middle', horizontal: 'center' };
                         ws2.getRow(currentRow).height = 20;
 
-                        // 번호 셀 세로 병합을 위해 비워둠
-                        ws2.mergeCells(`A${currentRow - 1}:A${currentRow + 1}`);
-
                         currentRow++;
 
-                        // 3. 사진 영역 (한 페이지에 2개 들어가도록 넉넉한 높이 설정)
-                        ws2.getRow(currentRow).height = 320; 
+                        // 3. 사진 영역 (한 페이지에 2개가 꽉 차게 높이 설정)
+                        ws2.getRow(currentRow).height = 240; 
 
-                        // 이미지 삽입 헬퍼
+                        // 테두리 서식 적용 (이미지 삽입 전에 미리 테두리부터 확정)
+                        for (let r = currentRow - 2; r <= currentRow; r++) {
+                            ['A', 'B', 'C'].forEach(col => {
+                                ws2.getCell(`${col}${r}`).border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+                            });
+                        }
+
+                        // 이미지 삽입 헬퍼 (오류 방지 및 동적 확장자 적용, 셀에 꽉 차게 앵커 지정)
                         const addImageToCell = (base64Str, colIndex, rIdx) => {
-                            if (!base64Str) return;
+                            if (!base64Str || !base64Str.startsWith('data:image/')) return;
                             try {
+                                // 데이터에서 실제 확장자를 뽑아냄 (png or jpeg)
+                                const mimeType = base64Str.substring(5, base64Str.indexOf(';'));
+                                const ext = mimeType.includes('png') ? 'png' : 'jpeg';
                                 const base64Data = base64Str.split(',')[1];
-                                const imageId = wb.addImage({ base64: base64Data, extension: 'jpeg' });
+                                if (!base64Data) return;
+
+                                const imageId = wb.addImage({
+                                    base64: base64Data,
+                                    extension: ext, // 추출된 정확한 포맷 전달 (엑셀 깨짐 방지 핵심)
+                                });
+                                
                                 ws2.addImage(imageId, {
-                                    tl: { col: colIndex, row: rIdx - 1 }, // 0-based row
-                                    ext: { width: 310, height: 310 },     // 셀 크기에 얼추 맞춤
-                                    editAs: 'oneCell'                     // 셀 안에서 리사이즈 되도록 앵커 고정
+                                    // 각 셀 내부에 5%씩 여백을 주고 꽉 채움 (기기 해상도 종속성 탈피)
+                                    tl: { col: colIndex + 0.05, row: rIdx - 1 + 0.05 },
+                                    br: { col: colIndex + 0.95, row: rIdx - 0.05 },
+                                    editAs: 'oneCell'
                                 });
                             } catch(e) { console.error("이미지 삽입 실패:", e) }
                         };
 
                         if (c.image) addImageToCell(c.image, 1, currentRow);           // Column B (index 1)
                         if (c.completedImage) addImageToCell(c.completedImage, 2, currentRow); // Column C (index 2)
-
-                        // 테두리 서식 적용 (현재 항목 3줄)
-                        for (let r = currentRow - 2; r <= currentRow; r++) {
-                            ['A', 'B', 'C'].forEach(col => {
-                                ws2.getCell(`${col}${r}`).border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-                            });
-                        }
 
                         currentRow += 2; // 다음 항목 간 여백 1줄 (빈 줄)
                     }
