@@ -320,14 +320,14 @@
 
                     // --- [시트 2: 사진대지] ---
                     const ws2 = wb.addWorksheet('사진대지', {
-                        pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5 } }
+                        pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5 } }
                     });
 
                     // 컬럼 너비 강제 고정 (무너짐 방지)
                     ws2.columns = [
-                        { key: 'A', width: 12 },
-                        { key: 'B', width: 45 },
-                        { key: 'C', width: 45 }
+                        { key: 'A', width: 10 },
+                        { key: 'B', width: 42 },
+                        { key: 'C', width: 42 }
                     ];
 
                     let currentRow = 1;
@@ -376,7 +376,7 @@
                             });
                         }
 
-                        // 완벽하게 앵커링 되는 이미지 삽입 함수
+                        // 완벽하게 앵커링 되는 이미지 삽입 함수 (엑셀 이미지 증발 오류 원천 차단)
                         const addImageToCell = (base64Str, colIndex, rIdx) => {
                             if (!base64Str || typeof base64Str !== 'string') return;
                             try {
@@ -385,12 +385,14 @@
 
                                 const imageId = wb.addImage({
                                     base64: base64Data,
-                                    extension: 'jpeg', // 변환 코드가 항상 jpeg를 뱉음
+                                    extension: 'jpeg', 
                                 });
                                 
+                                // tl과 br 정수 좌표계를 활용해 셀의 좌상단~우하단 모서리에 이미지를 완전히 구속시킴
                                 ws2.addImage(imageId, {
-                                    tl: { col: colIndex, row: rIdx - 1 }, // tl 좌표계는 0-based. Col B=1, Col C=2.
-                                    ext: { width: 310, height: 310 },     // 셀 크기에 관계없이 명확한 픽셀 사이즈 강제 지정
+                                    tl: { col: colIndex, row: rIdx - 1 },
+                                    br: { col: colIndex + 1, row: rIdx },
+                                    editAs: 'oneCell'
                                 });
                             } catch(e) { console.error("이미지 삽입 실패:", e) }
                         };
@@ -401,9 +403,10 @@
                         currentRow += 2; // 다음 항목 간 여백 1줄 (빈 줄)
                     }
 
-                    // 파일 생성
+                    // 파일 생성 (MIME 타입을 명시하여 엑셀의 자체 복구 및 이미지 삭제 버그 방지)
                     const buffer = await wb.xlsx.writeBuffer();
-                    saveAs(new Blob([buffer]), `안전점검_체크리스트_${getLocalYMD()}.xlsx`);
+                    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    saveAs(blob, `안전점검_체크리스트_${getLocalYMD()}.xlsx`);
                     showToast('엑셀 다운로드가 완료되었습니다.');
 
                 } catch(e) {
