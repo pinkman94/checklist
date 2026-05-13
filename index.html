@@ -407,13 +407,17 @@
                 }
             };
 
-            // 통계 및 뱃지 카운트 계산
-            const totalCount = checklists.length;
-            const completedCount = checklists.filter(c => c.isCompleted).length;
-            const pendingApprovalCount = checklists.filter(c => !c.isCompleted && c.isPendingApproval).length;
+            // 필터링된 체크리스트 계산
+            const filteredChecklists = selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists;
+
+            // 통계 및 뱃지 카운트 계산 (선택된 공종 필터 반영)
+            const totalCount = filteredChecklists.length;
+            const completedCount = filteredChecklists.filter(c => c.isCompleted).length;
+            const pendingApprovalCount = filteredChecklists.filter(c => !c.isCompleted && c.isPendingApproval).length;
             const pendingCount = totalCount - completedCount - pendingApprovalCount;
             const unreadNotifCount = notifications.filter(n => !n.isRead).length;
 
+            // 공종별 버튼 목록을 위한 통계는 항상 전체 데이터를 기준으로 계산
             const tradeStats = checklists.reduce((acc, curr) => {
                 if (!acc[curr.trade]) acc[curr.trade] = { total: 0, pending: 0, waiting: 0 };
                 acc[curr.trade].total += 1;
@@ -547,35 +551,35 @@
                                                 <input type="file" className="hidden" accept="image/*" onChange={handleImg} ref={fileRef}/>
                                             </label>
                                             <button type="submit" className="flex-1 bg-blue-600 text-white font-bold p-2.5 rounded-lg shadow hover:bg-blue-700 transition">등록하기</button>
-                                        </div>
-                                    </form>
-                                    {img && <div className="mt-3 relative inline-block">
-                                        <img src={img} className="h-24 object-cover rounded-lg border shadow-sm" alt="preview"/>
-                                        <button type="button" onClick={()=>{setImg(null); if(fileRef.current) fileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
-                                    </div>}
-                                </div>
+                                    </div>
+                                </form>
+                                {img && <div className="mt-3 relative inline-block">
+                                    <img src={img} className="h-24 object-cover rounded-lg border shadow-sm" alt="preview"/>
+                                    <button type="button" onClick={()=>{setImg(null); if(fileRef.current) fileRef.current.value="";}} className="absolute -top-2 -right-2 bg-slate-800 text-white rounded-full w-6 h-6 flex items-center justify-center shadow-lg hover:bg-rose-500 transition"><i className="fa-solid fa-xmark text-xs"></i></button>
+                                </div>}
+                            </div>
 
-                                {/* 현황 요약 보드 */}
-                                <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex flex-wrap sm:flex-nowrap justify-around sm:divide-x divide-slate-100 gap-y-4">
-                                    <div className="text-center w-1/2 sm:w-full">
-                                        <p className="text-xs font-bold text-slate-500 mb-1">총 점검</p>
-                                        <p className="text-2xl font-black text-slate-800">{totalCount}</p>
-                                    </div>
-                                    <div className="text-center w-1/2 sm:w-full border-l sm:border-l-0 border-slate-100">
-                                        <p className="text-xs font-bold text-slate-500 mb-1">최종 완료</p>
-                                        <p className="text-2xl font-black text-emerald-500">{completedCount}</p>
-                                    </div>
-                                    <div className="text-center w-1/2 sm:w-full border-t sm:border-t-0 sm:border-l border-slate-100 pt-4 sm:pt-0">
-                                        <p className="text-xs font-bold text-slate-500 mb-1">원청 확인 대기</p>
-                                        <p className="text-2xl font-black text-amber-500">{pendingApprovalCount}</p>
-                                    </div>
-                                    <div className="text-center w-1/2 sm:w-full border-t border-l sm:border-t-0 border-slate-100 pt-4 sm:pt-0">
-                                        <p className="text-xs font-bold text-slate-500 mb-1">미조치</p>
-                                        <p className="text-2xl font-black text-rose-500">{pendingCount}</p>
-                                    </div>
+                            {/* 현황 요약 보드 */}
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex flex-wrap sm:flex-nowrap justify-around sm:divide-x divide-slate-100 gap-y-4">
+                                <div className="text-center w-1/2 sm:w-full">
+                                    <p className="text-xs font-bold text-slate-500 mb-1">{selectedTradeFilter ? `[${selectedTradeFilter}] 총 점검` : '전체 총 점검'}</p>
+                                    <p className="text-2xl font-black text-slate-800">{totalCount}</p>
                                 </div>
+                                <div className="text-center w-1/2 sm:w-full border-l sm:border-l-0 border-slate-100">
+                                    <p className="text-xs font-bold text-slate-500 mb-1">최종 완료</p>
+                                    <p className="text-2xl font-black text-emerald-500">{completedCount}</p>
+                                </div>
+                                <div className="text-center w-1/2 sm:w-full border-t sm:border-t-0 sm:border-l border-slate-100 pt-4 sm:pt-0">
+                                    <p className="text-xs font-bold text-slate-500 mb-1">원청 확인 대기</p>
+                                    <p className="text-2xl font-black text-amber-500">{pendingApprovalCount}</p>
+                                </div>
+                                <div className="text-center w-1/2 sm:w-full border-t border-l sm:border-t-0 border-slate-100 pt-4 sm:pt-0">
+                                    <p className="text-xs font-bold text-slate-500 mb-1">미조치</p>
+                                    <p className="text-2xl font-black text-rose-500">{pendingCount}</p>
+                                </div>
+                            </div>
 
-                                {/* 공종별 점검 현황 통계 (필터 기능) */}
+                            {/* 공종별 점검 현황 통계 (필터 기능) */}
                                 {Object.keys(tradeStats).length > 0 && (
                                     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
                                         <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-3">
@@ -602,7 +606,7 @@
 
                                 {/* 리스트 출력 영역 */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-                                {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).map((c, idx) => {
+                                {filteredChecklists.map((c, idx) => {
                                     // 상태 분류: 완료(completed) / 원청 확인 대기(pending) / 미조치(incomplete)
                                     const isCompleted = c.isCompleted;
                                     const isPending = !c.isCompleted && c.isPendingApproval;
@@ -694,7 +698,7 @@
                                             </div>
                                         </div>
                                     )})}
-                                    {(selectedTradeFilter ? checklists.filter(c => c.trade === selectedTradeFilter) : checklists).length === 0 && (
+                                    {filteredChecklists.length === 0 && (
                                         <div className="col-span-1 md:col-span-2 bg-white rounded-2xl border border-dashed border-slate-300 text-center py-16">
                                             <i className="fa-regular fa-clipboard text-4xl text-slate-300 mb-3"></i>
                                             <p className="text-slate-500 font-bold">등록된 체크리스트가 없습니다.</p>
